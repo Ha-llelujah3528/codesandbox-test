@@ -10,6 +10,10 @@ export const GRID_H = 12;
 // Number of distinct block colors in play.
 export const NUM_COLORS = 5;
 
+// Topmost occupied row at/above which the stack is in "panic" (worried faces,
+// shaking, tense BGM). row 0 is the deadline: a block reaching it tops out.
+export const DANGER_TOP_ROW = 2;
+
 // --- Swap ---
 export const SWAP_TIME = 11; // frames a swap animation takes (visible "flip")
 

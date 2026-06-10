@@ -1,8 +1,10 @@
 import "./styles.css";
 import { Engine } from "./core/engine.js";
 import { InputManager } from "./input/inputManager.js";
+import { ControlConfig } from "./input/controlConfig.js";
 import { Renderer } from "./render/renderer.js";
 import { AudioEngine } from "./audio/audioEngine.js";
+import { initSettings } from "./ui/settings.js";
 
 // ---- bootstrap (the ONLY place that touches the browser clock) ----------
 const canvas = document.getElementById("game");
@@ -10,7 +12,8 @@ const hint = document.getElementById("boot-hint");
 
 let seed = (Date.now() & 0xffffffff) >>> 0;
 let engine = new Engine(seed, { startRows: 6 });
-const input = new InputManager();
+const config = new ControlConfig();
+const input = new InputManager(config);
 const renderer = new Renderer(canvas, engine);
 const audio = new AudioEngine();
 
@@ -30,6 +33,22 @@ function setPaused(p) {
   if (btn) btn.textContent = p ? "▶" : "❚❚";
 }
 
+// Controller configuration screen: opening it pauses the game; the layout
+// editor lets the player drag the on-screen pad around freely.
+let settingsActive = false;
+initSettings({
+  config,
+  input,
+  onOpen: () => {
+    settingsActive = true;
+    setPaused(true);
+  },
+  onClose: () => {
+    settingsActive = false;
+    if (!engine.gameOver) setPaused(false);
+  },
+});
+
 // Pause button + P key. Tapping the paused overlay resumes.
 const pauseBtn = document.getElementById("pause-btn");
 if (pauseBtn) {
@@ -39,7 +58,7 @@ if (pauseBtn) {
   });
 }
 canvas.addEventListener("pointerdown", () => {
-  if (paused) setPaused(false);
+  if (paused && !settingsActive) setPaused(false);
 });
 
 // Restart on R.

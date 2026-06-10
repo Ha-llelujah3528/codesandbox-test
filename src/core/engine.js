@@ -53,8 +53,25 @@ export class Engine {
     const settled = this.advanceGravity();
     this.detectMatches(settled);
     this.advanceRising();
+    if (this.checkTopOut()) return; // instant game over the moment we touch the line
     this.resolveChainAndDanger();
     this.advanceLevel();
+  }
+
+  // Game over the INSTANT the topmost panel touches the top line (row 0).
+  // The line sits at the very top of the playfield, so a panel "touches" it
+  // the moment it occupies row 0 — whether pushed there by rising or dropped
+  // there by gravity. Checked every tick (not just on a full rise-shift).
+  checkTopOut() {
+    if (this.gameOver) return false;
+    const top = stackTopRow(this.board);
+    if (top === 0) {
+      this.gameOver = true;
+      this.danger = true;
+      this.emit(Ev.TOP_OUT, {});
+      return true;
+    }
+    return false;
   }
 
   // 1. input ------------------------------------------------------------
@@ -306,7 +323,7 @@ export class Engine {
       this.combo = 0;
     }
     const top = stackTopRow(this.board);
-    const danger = top <= 1 && top < C.GRID_H;
+    const danger = top <= C.DANGER_TOP_ROW && top < C.GRID_H;
     if (danger !== this.danger) {
       this.danger = danger;
       this.emit(Ev.DANGER, { on: danger });

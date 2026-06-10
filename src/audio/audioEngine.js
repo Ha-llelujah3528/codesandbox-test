@@ -67,6 +67,16 @@ export class AudioEngine {
     this.sfxGain.gain.value = 0.5;
     this.sfxGain.connect(this.master);
 
+    // dedicated short, bright plate reverb for SFX so the mecha one-shots have
+    // real body/space (separate from the long musical reverb).
+    this.sfxVerb = ctx.createConvolver();
+    this.sfxVerb.buffer = this._makeImpulse(0.7, 3.4);
+    this.sfxVerbReturn = ctx.createGain();
+    this.sfxVerbReturn.gain.value = 0.22;
+    this.sfxGain.connect(this.sfxVerb);
+    this.sfxVerb.connect(this.sfxVerbReturn);
+    this.sfxVerbReturn.connect(this.master);
+
     this.started = true;
     this.nextNoteTime = this.ctx.currentTime + 0.05;
     this._timer = setInterval(() => this._scheduler(), 25);
@@ -114,6 +124,10 @@ export class AudioEngine {
         case Ev.SWAP:
           this.sfx("swap");
           break;
+        case Ev.POP:
+          // staggered shatter — pitch rises through the group for a tinkle
+          this.sfx("pop", e.index);
+          break;
         case Ev.MATCH:
           this.sfx("beam", e.count);
           break;
@@ -146,89 +160,139 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     switch (kind) {
       case "cursor":
-        this._blip(t, 880, 0.04, 0.12, "square");
+        // soft electronic tick with a tiny metallic ring
+        this._blip(t, 920, 0.035, 0.1, "square");
+        this._partial(t, 1840, 0.05, 0.04, "sine");
         break;
-      case "swap":
-        this._blip(t, 320, 0.05, 0.2, "sawtooth");
-        this._blip(t + 0.02, 520, 0.05, 0.15, "square");
+      case "swap": {
+        // heavy servo/relay clack: noisy transient + detuned metal body + thunk
+        this._noise(t, 0.045, 0.28, 2600, "highpass", 0.4);
+        this._partial(t, 300, 0.09, 0.16, "sawtooth", 0.5);
+        this._partial(t, 452, 0.08, 0.1, "square", 0.5);
+        this._sweep(t + 0.01, 620, 360, 0.07, 0.12, "triangle");
         break;
+      }
+      case "pop": {
+        // crisp shatter of one armor plate: bright metallic ping + debris
+        const f = 720 + Math.min(n, 12) * 70;
+        this._partial(t, f, 0.09, 0.12, "triangle", 0.5);
+        this._partial(t, f * 1.5, 0.07, 0.06, "sine", 0.5);
+        this._noise(t, 0.06, 0.12, 4200, "highpass", 0.3);
+        break;
+      }
       case "beam": {
-        // beam-saber-ish descending zap, brighter for bigger clears
-        const f0 = 1400 + n * 120;
-        this._sweep(t, f0, f0 * 0.4, 0.18, 0.28, "sawtooth");
-        this._noise(t, 0.08, 0.12, 3000);
+        // mobile-suit beam discharge: bright detuned saw zap + air burst,
+        // brighter & longer for bigger clears, with a metallic ring tail
+        const f0 = 1500 + n * 130;
+        this._sweep(t, f0, f0 * 0.32, 0.22, 0.26, "sawtooth", 0.5);
+        this._sweep(t, f0 * 1.005, f0 * 0.33, 0.22, 0.16, "square", 0.5);
+        this._noise(t, 0.1, 0.16, 3400, "bandpass", 0.4);
+        this._partial(t + 0.04, 2400 + n * 80, 0.28, 0.06, "sine", 0.7);
         break;
       }
       case "chain": {
-        // rising charge whose pitch climbs with chain depth
-        const base = 300 + Math.min(n, 10) * 90;
-        this._sweep(t, base, base * 2.4, 0.22, 0.32, "square");
+        // rising power-up charge that climbs with chain depth (wet tail)
+        const base = 300 + Math.min(n, 12) * 95;
+        this._sweep(t, base, base * 2.5, 0.26, 0.3, "square", 0.4);
+        this._sweep(t, base * 0.5, base * 1.25, 0.26, 0.16, "sawtooth", 0.4);
+        this._partial(t + 0.05, base * 3, 0.3, 0.07, "sine", 0.8);
         break;
       }
       case "lockon":
-        for (let i = 0; i < 3; i++)
-          this._blip(t + i * 0.06, 1200 + i * 200, 0.04, 0.18, "square");
+        // triple targeting beep, each layered with its octave
+        for (let i = 0; i < 3; i++) {
+          this._blip(t + i * 0.06, 1200 + i * 220, 0.04, 0.16, "square");
+          this._partial(t + i * 0.06, 2400 + i * 440, 0.05, 0.05, "sine");
+        }
         break;
       case "raise":
-        this._sweep(t, 200, 380, 0.12, 0.18, "triangle");
+        // hydraulic armor slide: filtered noise whoosh + low ramp
+        this._noise(t, 0.16, 0.14, 700, "bandpass", 0.2, 900);
+        this._sweep(t, 180, 360, 0.14, 0.16, "triangle");
         break;
       case "levelup":
-        [0, 0.08, 0.16].forEach((d, i) =>
-          this._blip(t + d, 600 + i * 300, 0.1, 0.2, "triangle")
-        );
+        [0, 0.08, 0.16].forEach((d, i) => {
+          this._blip(t + d, 600 + i * 300, 0.1, 0.18, "triangle");
+          this._partial(t + d, 1200 + i * 600, 0.12, 0.05, "sine", 0.6);
+        });
         break;
       case "alarm":
-        this._blip(t, 760, 0.12, 0.16, "square");
-        this._blip(t + 0.16, 760, 0.12, 0.16, "square");
+        // two-tone klaxon with a buzzy edge
+        for (const d of [0, 0.16]) {
+          this._partial(t + d, 760, 0.13, 0.16, "square", 0.3);
+          this._partial(t + d, 764, 0.13, 0.1, "sawtooth", 0.3);
+        }
         break;
       case "down":
-        this._sweep(t, 600, 60, 0.7, 0.4, "sawtooth");
-        this._noise(t, 0.5, 0.18, 1200);
+        // system shutdown: long detuned descend + debris noise + low boom
+        this._sweep(t, 620, 58, 0.8, 0.4, "sawtooth", 0.45);
+        this._sweep(t, 610, 52, 0.8, 0.26, "square", 0.45);
+        this._noise(t, 0.6, 0.2, 1100, "lowpass", 0.5);
+        this._partial(t, 90, 0.7, 0.3, "sine");
         break;
     }
   }
 
-  _env(node, t, attack, dur, peak) {
+  // `send` (0..1) routes a copy of the voice to the SFX reverb for space.
+  _env(node, t, attack, dur, peak, send = 0) {
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(peak, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
     node.connect(g);
     g.connect(this.sfxGain);
+    if (send > 0 && this.sfxVerb) {
+      const sg = this.ctx.createGain();
+      sg.gain.value = send;
+      g.connect(sg);
+      sg.connect(this.sfxVerb);
+    }
     return g;
   }
 
-  _blip(t, freq, dur, peak, type = "square") {
+  _blip(t, freq, dur, peak, type = "square", send = 0) {
     const o = this.ctx.createOscillator();
     o.type = type;
     o.frequency.value = freq;
-    this._env(o, t, 0.005, dur, peak);
+    this._env(o, t, 0.005, dur, peak, send);
     o.start(t);
     o.stop(t + dur + 0.02);
   }
 
-  _sweep(t, f0, f1, dur, peak, type = "sawtooth") {
+  // A single sustained partial (used to stack metallic overtones / rings).
+  _partial(t, freq, dur, peak, type = "sine", send = 0) {
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = freq;
+    this._env(o, t, 0.004, dur, peak, send);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+
+  _sweep(t, f0, f1, dur, peak, type = "sawtooth", send = 0) {
     const o = this.ctx.createOscillator();
     o.type = type;
     o.frequency.setValueAtTime(f0, t);
     o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
-    this._env(o, t, 0.006, dur, peak);
+    this._env(o, t, 0.006, dur, peak, send);
     o.start(t);
     o.stop(t + dur + 0.02);
   }
 
-  _noise(t, dur, peak, cutoff) {
+  _noise(t, dur, peak, cutoff, type = "bandpass", send = 0, sweepTo = null) {
     const len = Math.floor(this.ctx.sampleRate * dur);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     const f = this.ctx.createBiquadFilter();
-    f.type = "bandpass";
-    f.frequency.value = cutoff;
+    f.type = type;
+    f.frequency.setValueAtTime(cutoff, t);
+    if (sweepTo) f.frequency.exponentialRampToValueAtTime(sweepTo, t + dur);
+    f.Q.value = 1.2;
     src.connect(f);
-    this._env(f, t, 0.005, dur, peak);
+    this._env(f, t, 0.005, dur, peak, send);
     src.start(t);
     src.stop(t + dur);
   }

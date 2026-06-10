@@ -220,6 +220,22 @@ export class Renderer {
       ctx.arc(bx, by, 3, 0, Math.PI * 2);
       ctx.fill();
     }
+    // deadline line at the very top of the field: the moment a panel touches
+    // this line it's game over. Pulses red while in the danger zone.
+    const inDanger = this.engine.danger && !this.engine.gameOver;
+    const pulse = inDanger ? 0.55 + 0.45 * Math.abs(Math.sin(this.engine.frame * 0.25)) : 0.5;
+    ctx.strokeStyle = inDanger
+      ? `rgba(255,60,90,${pulse})`
+      : "rgba(255,150,60,0.5)";
+    ctx.lineWidth = inDanger ? 2.5 : 1.6;
+    ctx.shadowColor = inDanger ? "#ff3b5c" : "transparent";
+    ctx.shadowBlur = inDanger ? 12 : 0;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.moveTo(x, y + 1);
+    ctx.lineTo(x + w, y + 1);
+    ctx.stroke();
+    ctx.setLineDash([]);
     ctx.restore();
     // clip playfield so rising blocks don't spill out the top
     ctx.save();
@@ -230,20 +246,28 @@ export class Renderer {
   }
 
   drawBoardCells(ctx) {
+    const panic = this.engine.danger && !this.engine.gameOver;
     for (let gy = 0; gy < C.GRID_H; gy++) {
       for (let gx = 0; gx < C.GRID_W; gx++) {
         const b = this.engine.board.cells[idx(gx, gy)];
         if (b.color === Color.NONE) continue;
         if (b.state === State.SWAPPING) continue; // drawn by drawSwap
         const px = this.originX + gx * this.cell;
-        const py = this.cellScreenY(gx, gy);
-        this.drawBlock(ctx, px, py, b, false);
+        let py = this.cellScreenY(gx, gy);
+        // PANIC: settled blocks get the jitters and bob up/down (パネポン風)
+        if (panic && b.state === State.IDLE) {
+          py += Math.sin(this.engine.frame * 0.5 + gx * 0.8 + gy * 0.35) * (this.cell * 0.07);
+        }
+        this.drawBlock(ctx, px, py, b, false, panic);
       }
     }
     this.drawSwap(ctx);
   }
 
-  // Animated swap: the two cells cross over with a card-flip ("くるっと").
+  // Animated swap: instead of a flat card-flip (which looked paper-thin), the
+  // two plates LIFT off the board — rising on a hydraulic arc with a cast
+  // shadow and a slight pop in scale — then settle into their new slots. This
+  // sells real 3D depth ("立体感").
   drawSwap(ctx) {
     const sw = this.engine.activeSwap;
     if (!sw) return;
@@ -252,24 +276,40 @@ export class Renderer {
     const a = this.engine.board.cells[idx(x, y)];
     const b = this.engine.board.cells[idx(x + 1, y)];
     const raw = 1 - Math.max(0, timer) / C.SWAP_TIME; // 0..1
-    const p = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2;
+    const p = raw < 0.5 ? 2 * raw * raw : 1 - Math.pow(-2 * raw + 2, 2) / 2; // ease
     const py = this.cellScreenY(x, y);
     const pxL = this.originX + x * cell;
-    const flip = Math.max(0.12, Math.abs(Math.cos(raw * Math.PI)));
+    const arc = Math.sin(raw * Math.PI); // 0 -> 1 -> 0 lift envelope
 
     const sides = [
-      { b: a, x: pxL + p * cell, lead: raw < 0.5 },
-      { b: b, x: pxL + cell - p * cell, lead: raw >= 0.5 },
+      { blk: a, sx: pxL + p * cell, lead: raw < 0.5 },
+      { blk: b, sx: pxL + cell - p * cell, lead: raw >= 0.5 },
     ];
-    // draw the trailing piece first so the leading one sits on top mid-cross
+    // draw the trailing piece first so the leading one rides on top mid-cross
     sides.sort((m, n) => (m.lead ? 1 : 0) - (n.lead ? 1 : 0));
     for (const sd of sides) {
-      if (sd.b.color === Color.NONE) continue;
+      if (sd.blk.color === Color.NONE) continue;
+      const lift = arc * cell * 0.3; // height the plate rises off the board
+      const scale = 1 + arc * 0.14; // pops toward the viewer at the apex
+
+      // cast shadow on the board — offset/softened as the plate rises higher
       ctx.save();
-      ctx.translate(sd.x + cell / 2, py + cell / 2);
-      ctx.scale(flip, 1);
+      ctx.globalAlpha = 0.45 - arc * 0.18;
+      ctx.fillStyle = "#01030a";
+      const sIn = cell * 0.12 + arc * cell * 0.06;
+      this.chamferRect(
+        ctx, sd.sx + sIn, py + sIn + lift * 0.45 + 3,
+        cell - sIn * 2, cell - sIn * 2, cell * 0.16
+      );
+      ctx.fill();
+      ctx.restore();
+
+      // the lifted plate itself
+      ctx.save();
+      ctx.translate(sd.sx + cell / 2, py + cell / 2 - lift);
+      ctx.scale(scale, scale);
       ctx.translate(-(cell / 2), -(cell / 2));
-      this.drawBlock(ctx, 0, 0, { color: sd.b.color, state: State.IDLE, timer: 0 }, false);
+      this.drawBlock(ctx, 0, 0, { color: sd.blk.color, state: State.IDLE, timer: 0 }, false, false);
       ctx.restore();
     }
   }
@@ -324,7 +364,7 @@ export class Renderer {
     }
   }
 
-  drawBlock(ctx, px, py, b, dim) {
+  drawBlock(ctx, px, py, b, dim, panic) {
     const cell = this.cell;
     const ramp = PALETTE[b.color] || PALETTE[Color.WHITE];
     const inset = cell * 0.06;
@@ -344,6 +384,23 @@ export class Renderer {
 
     ctx.save();
     ctx.globalAlpha = alpha;
+
+    // --- extruded side: a darker plate offset downward so the block reads as
+    // a solid, thick part rather than a flat sticker (depth on every panel) ---
+    if (!flash && !dim) {
+      const dz = Math.max(2.5, s * 0.1);
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 6;
+      ctx.shadowOffsetY = 3;
+      const side = ctx.createLinearGradient(x, y, x, y + s + dz);
+      side.addColorStop(0, ramp.dark);
+      side.addColorStop(1, "#02040a");
+      ctx.fillStyle = side;
+      this.chamferRect(ctx, x, y + dz, s, s, c);
+      ctx.fill();
+      ctx.restore();
+    }
 
     // --- armor plate body (chamfered) with metallic vertical gradient ---
     ctx.shadowColor = ramp.glow;
@@ -424,10 +481,13 @@ export class Renderer {
       ctx.shadowBlur = 0;
     }
 
-    // --- unit insignia / colorblind glyph, or surprised face on clear ---
+    // --- unit insignia / colorblind glyph, surprised face on clear, or the
+    //     worried "panic" face while the stack is in the danger zone ---
     ctx.globalAlpha = alpha * 0.92;
     if (b.state === State.FACE) {
       this.drawFace(ctx, x, y, s);
+    } else if (panic && !flash) {
+      this.drawPanicFace(ctx, x, y, s);
     } else {
       this.drawGlyph(
         ctx,
@@ -439,6 +499,40 @@ export class Renderer {
       );
     }
 
+    ctx.restore();
+  }
+
+  // Worried face shown on every settled block when the stack is dangerously
+  // high — slanted anxious eyes, a wavering frown and a sweat bead. Paired
+  // with the per-block bob in drawBoardCells for the classic Panel de Pon panic.
+  drawPanicFace(ctx, x, y, s) {
+    ctx.save();
+    ctx.strokeStyle = "#0a1430";
+    ctx.lineWidth = Math.max(1.6, s * 0.05);
+    ctx.lineCap = "round";
+    // anxious slanted eyes (>  <)
+    const ey = y + s * 0.4;
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.28, ey - s * 0.07);
+    ctx.lineTo(x + s * 0.42, ey + s * 0.04);
+    ctx.moveTo(x + s * 0.72, ey - s * 0.07);
+    ctx.lineTo(x + s * 0.58, ey + s * 0.04);
+    ctx.stroke();
+    // wavering frown
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.34, y + s * 0.68);
+    ctx.quadraticCurveTo(x + s * 0.43, y + s * 0.58, x + s * 0.5, y + s * 0.66);
+    ctx.quadraticCurveTo(x + s * 0.57, y + s * 0.74, x + s * 0.66, y + s * 0.64);
+    ctx.stroke();
+    // sweat bead (upper right), jittering with the frame
+    const j = Math.sin(this.engine.frame * 0.6 + x) * s * 0.02;
+    ctx.fillStyle = "#bfe9ff";
+    ctx.globalAlpha *= 0.9;
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.8, y + s * 0.22 + j);
+    ctx.quadraticCurveTo(x + s * 0.9, y + s * 0.38 + j, x + s * 0.8, y + s * 0.42 + j);
+    ctx.quadraticCurveTo(x + s * 0.7, y + s * 0.38 + j, x + s * 0.8, y + s * 0.22 + j);
+    ctx.fill();
     ctx.restore();
   }
 

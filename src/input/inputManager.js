@@ -13,7 +13,8 @@ const DIRS = {
 };
 
 export class InputManager {
-  constructor() {
+  constructor(config) {
+    this.config = config; // ControlConfig: provides user key bindings
     this.dir = {
       left: { held: false, timer: 0 },
       right: { held: false, timer: 0 },
@@ -25,8 +26,15 @@ export class InputManager {
     this.lastRaise = false;
     this.onFirstInput = null;
     this._booted = false;
+    this._captureCb = null; // when set, the next key is captured for rebinding
     this._bindKeyboard();
     this._bindTouch();
+  }
+
+  // Capture the next key press (for the controller config screen) instead of
+  // sending it to the game. Esc cancels. Returns via the callback.
+  captureNextKey(cb) {
+    this._captureCb = cb;
   }
 
   _boot() {
@@ -87,30 +95,22 @@ export class InputManager {
   }
 
   _bindKeyboard() {
-    const map = {
-      ArrowLeft: "left",
-      ArrowRight: "right",
-      ArrowUp: "up",
-      ArrowDown: "down",
-      KeyA: "left",
-      KeyD: "right",
-      KeyW: "up",
-      KeyS: "down",
-      Space: "swap",
-      KeyZ: "swap",
-      KeyJ: "swap",
-      ShiftLeft: "raise",
-      ShiftRight: "raise",
-      KeyK: "raise",
-    };
     window.addEventListener("keydown", (e) => {
-      const act = map[e.code];
+      // rebinding capture takes priority over normal play
+      if (this._captureCb) {
+        e.preventDefault();
+        const cb = this._captureCb;
+        this._captureCb = null;
+        cb(e.code === "Escape" ? null : e.code);
+        return;
+      }
+      const act = this.config ? this.config.actionForCode(e.code) : null;
       if (!act) return;
       e.preventDefault();
       if (!e.repeat) this.press(act);
     });
     window.addEventListener("keyup", (e) => {
-      const act = map[e.code];
+      const act = this.config ? this.config.actionForCode(e.code) : null;
       if (!act) return;
       this.release(act);
     });
