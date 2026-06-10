@@ -1,2 +1,49 @@
-# codesandbox-test
-Created with CodeSandbox
+# PANEL ASSAULT — パネルでポン系パズル（Webプロトタイプ）
+
+「パネルでポン（Tetris Attack / Puzzle League）」のゲーム性を本格再現するパズルゲーム。
+最終ターゲットは **iPhoneネイティブ（Swift / SpriteKit）** で、本リポジトリはまず
+「完成イメージを実際に遊んで体感する」ための **高品質Webプロトタイプ**。
+
+ビジュアルは **ネオン/サイバー × ガンダム的メカ意匠**、サウンドは
+**アシッドジャズ風グルーヴBGM＋メカ効果音**（すべてWebAudioで合成）。
+
+## 動かし方
+
+```bash
+npm install
+npm start      # parcel が http://localhost:1234 を開く
+```
+
+## 操作
+
+| 操作 | キーボード | タッチ |
+|---|---|---|
+| カーソル移動 | 矢印キー / WASD | 十字ボタン |
+| スワップ（横2マス入替） | Space / Z / J | SWAP |
+| 手動せり上げ（押し続け） | Shift / K | RAISE |
+| リスタート | R | — |
+| ミュート | M | — |
+
+## アーキテクチャ（Swift移植を見据えた分離）
+
+- `src/core/` … **ブラウザ依存ゼロの決定論ゲームコア**。`tick(commands)` でのみ進行、
+  seed付きRNG、整数フレーム時間。同seed＋同入力で完全再現（リプレイ/ネット同期/AIの土台）。
+  Swift `struct` へ1:1転写できる素データ設計。
+  - `engine.js` … tickオーケストレータ（入力→スワップ→消去タイムライン→重力→マッチ/連鎖→せり上がり）
+  - チェインフラグ伝播ロジックは engine 内に実装
+  - `matcher.js` `board.js` `block.js` `rng.js` `constants.js`(タイミング/スコア表) ほか
+- `src/render/` … Canvas2D描画（ネオン発光・パーティクル・画面シェイク・コックピットHUD）
+- `src/input/` … キーボード/タッチ → 抽象コマンド（論理フレーム単位でサンプリング）
+- `src/audio/` … WebAudio合成のBGM＋SFX
+
+## 現状（実装済み）
+
+- エンドレス基本ループ：せり上がり・カーソル・スワップ・3マッチ消去・重力・落下
+- 消去タイムライン（flash → face → staggered pop）／連鎖（チェインフラグ）／コンボ／スコア
+- 危険演出・トップアウト（ゲームオーバー）・速度レベル上昇
+- ネオン×ガンダム意匠ビジュアル／パーティクル／画面シェイク
+- アシッドジャズ風BGM＋メカSFX
+
+## 今後（設計書のマイルストーン）
+
+おじゃまブロック → vs CPU（AI）→ お題パズル → 対戦/ネットコード → Swift/SpriteKit移植。

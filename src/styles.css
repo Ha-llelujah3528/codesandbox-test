@@ -1,3 +1,115 @@
+:root {
+  --bg0: #04060f;
+  --bg1: #0a1224;
+  --hud: #8fd9ff;
+  --accent: #ff3b6b;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+html,
 body {
-  font-family: sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: radial-gradient(120% 120% at 50% 0%, #0a1430 0%, var(--bg0) 70%);
+  font-family: "Eurostile", "Bank Gothic", "Arial Narrow", system-ui, sans-serif;
+  color: var(--hud);
+  overflow: hidden;
+  touch-action: none;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+#game {
+  display: block;
+  image-rendering: optimizeQuality;
+  box-shadow: 0 0 60px rgba(40, 120, 255, 0.25);
+}
+
+/* On-screen controls (mobile / preview) */
+#touch-controls {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: none;
+  justify-content: space-between;
+  padding: 18px 22px calc(18px + env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+
+#touch-controls button {
+  pointer-events: auto;
+  width: 58px;
+  height: 58px;
+  margin: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 200, 255, 0.5);
+  background: linear-gradient(180deg, rgba(20, 40, 80, 0.9), rgba(8, 16, 40, 0.9));
+  color: #bfe6ff;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  box-shadow: 0 0 14px rgba(40, 120, 255, 0.35), inset 0 0 8px rgba(80, 160, 255, 0.2);
+  transition: transform 0.05s ease, filter 0.05s ease;
+}
+#touch-controls button:active {
+  transform: scale(0.92);
+  filter: brightness(1.6);
+}
+#touch-controls .dpad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+#touch-controls .dpad-mid {
+  display: flex;
+}
+#touch-controls .actions {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+}
+#touch-controls .actions .primary {
+  width: 92px;
+  border-color: var(--accent);
+  color: #ffd2dd;
+  box-shadow: 0 0 16px rgba(255, 59, 107, 0.5), inset 0 0 8px rgba(255, 80, 120, 0.25);
+}
+
+#boot-hint {
+  position: fixed;
+  bottom: 28px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: rgba(160, 210, 255, 0.85);
+  text-shadow: 0 0 12px rgba(80, 160, 255, 0.7);
+  animation: blink 1.3s steps(2, start) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* Touch UI only on coarse pointers */
+@media (pointer: coarse) {
+  #touch-controls {
+    display: flex;
+  }
 }
