@@ -1,12 +1,12 @@
 import * as C from "../core/constants.js";
-import { Color, State, Ev } from "../core/types.js";
+import { Color, State, GState, Ev } from "../core/types.js";
 import { idx } from "../core/board.js";
 import { PALETTE, UI } from "./palette.js";
 
 // Reads engine state + event stream and paints the neon/Gundam playfield.
 // Owns no game logic — purely visual (particles, shake, HUD).
 export class Renderer {
-  constructor(canvas, engine) {
+  constructor(canvas, engine, opts = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.engine = engine;
@@ -17,13 +17,25 @@ export class Renderer {
     this.bannerLife = 0;
     this.paused = false;
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // multi-board support: render into a sub-rectangle of the canvas.
+    this.area = opts.area || null; // {x,y,w,h} in CSS px; null = full window
+    this.primary = opts.primary !== false; // primary clears the full background
+    this.showOverlays = opts.showOverlays !== false; // pause/gameover overlays
+    this.useTouchInset = opts.useTouchInset !== false; // reserve bottom for pad
+    this.label = opts.label || ""; // small board title (e.g. "YOU" / "CPU")
     this.resize();
     window.addEventListener("resize", () => this.resize());
+  }
+
+  setArea(area) {
+    this.area = area;
+    this.resize();
   }
 
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
+    // the canvas always spans the whole window; areas carve it up
     this.canvas.width = Math.floor(w * this.dpr);
     this.canvas.height = Math.floor(h * this.dpr);
     this.canvas.style.width = w + "px";
@@ -31,24 +43,26 @@ export class Renderer {
     this.W = w;
     this.H = h;
 
-    // Reserve space so the on-screen controls never cover the playfield.
-    const topInset = 76;
+    const area = this.area || { x: 0, y: 0, w, h };
+    const topInset = this.label ? 64 : 76;
     let bottomInset = 28;
-    const tc = document.getElementById("touch-controls");
-    if (tc && getComputedStyle(tc).display !== "none") {
-      const m = tc.getBoundingClientRect().height;
-      bottomInset = (m > 20 ? m : 168) + 10;
+    if (this.useTouchInset) {
+      const tc = document.getElementById("touch-controls");
+      if (tc && getComputedStyle(tc).display !== "none") {
+        const m = tc.getBoundingClientRect().height;
+        bottomInset = (m > 20 ? m : 168) + 10;
+      }
     }
-    const availH = h - topInset - bottomInset;
-
+    const availH = area.h - topInset - bottomInset;
+    const widthFrac = this.area ? 0.96 : 0.9;
     const cell = Math.floor(
-      Math.min((w * 0.9) / C.GRID_W, availH / C.GRID_H)
+      Math.min((area.w * widthFrac) / C.GRID_W, availH / C.GRID_H)
     );
     this.cell = cell;
     this.boardW = cell * C.GRID_W;
     this.boardH = cell * C.GRID_H;
-    this.originX = Math.floor((w - this.boardW) / 2);
-    this.originY = Math.floor(topInset + Math.max(0, (availH - this.boardH) / 2));
+    this.originX = area.x + Math.floor((area.w - this.boardW) / 2);
+    this.originY = area.y + Math.floor(topInset + Math.max(0, (availH - this.boardH) / 2));
   }
 
   // ---- event-driven visuals ------------------------------------------
@@ -138,13 +152,15 @@ export class Renderer {
     ctx.save();
     ctx.scale(this.dpr, this.dpr);
 
-    // background
-    const g = ctx.createLinearGradient(0, 0, 0, this.H);
-    g.addColorStop(0, UI.bg1);
-    g.addColorStop(1, UI.bg0);
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, this.W, this.H);
-    this.drawScanlines(ctx);
+    // background — only the primary renderer paints the full window
+    if (this.primary) {
+      const g = ctx.createLinearGradient(0, 0, 0, this.H);
+      g.addColorStop(0, UI.bg1);
+      g.addColorStop(1, UI.bg0);
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, this.W, this.H);
+      this.drawScanlines(ctx);
+    }
 
     // screen shake
     let sx = 0,
@@ -159,16 +175,20 @@ export class Renderer {
 
     this.drawFrame(ctx);
     this.drawBoardCells(ctx);
+    this.drawGarbage(ctx);
     this.drawNextRow(ctx);
     this.drawCursor(ctx);
     this.drawParticles(ctx);
 
     ctx.restore(); // shake
 
+    if (this.label) this.drawLabel(ctx);
     this.drawHud(ctx);
     this.drawBanner(ctx);
-    if (this.engine.danger) this.drawDanger(ctx);
-    if (this.engine.gameOver) this.drawGameOver(ctx);
+    if (this.engine.danger && !this.engine.gameOver) this.drawDanger(ctx);
+    // game-over is shown via the DOM result screen; the canvas only owns the
+    // pause overlay (shown whenever paused, on any board).
+    if (this.showOverlays && this.engine.gameOver) this.drawGameOver(ctx);
     else if (this.paused) this.drawPauseOverlay(ctx);
 
     if (this.chainFlash > 0) this.chainFlash *= 0.85;
@@ -362,6 +382,99 @@ export class Renderer {
       ctx.restore();
       this._clipped = false;
     }
+  }
+
+  // Heavy armored "おじゃま" slabs that drop on the opponent in vs mode.
+  drawGarbage(ctx) {
+    const cell = this.cell;
+    for (const g of this.engine.board.garbages) {
+      const fall = (g.fallOff / C.FALL_UNIT) * cell;
+      const px = this.originX + g.x * cell;
+      const py = this.originY + g.y * cell - this.riseFrac() * cell + fall;
+      const w = g.w * cell;
+      const h = g.h * cell;
+      const flashing = g.state === GState.FLASHING;
+      const flash = flashing && (this.engine.frame >> 1) % 2 === 0;
+      const pad = 2.5;
+      const bx = px + pad, by = py + pad, bw = w - pad * 2, bh = h - pad * 2;
+
+      ctx.save();
+      ctx.shadowColor = flash ? "#ffffff" : "rgba(0,0,0,0.6)";
+      ctx.shadowBlur = flash ? 26 : 10;
+      const grad = ctx.createLinearGradient(bx, by, bx, by + bh);
+      if (flash) {
+        grad.addColorStop(0, "#ffffff");
+        grad.addColorStop(1, "#cfe0ff");
+      } else {
+        grad.addColorStop(0, "#67738f");
+        grad.addColorStop(0.5, "#3a445d");
+        grad.addColorStop(1, "#202739");
+      }
+      ctx.fillStyle = grad;
+      this.roundRect(ctx, bx, by, bw, bh, 7);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // interior detailing, clipped to the slab
+      ctx.save();
+      this.roundRect(ctx, bx, by, bw, bh, 7);
+      ctx.clip();
+      // hazard stripes
+      ctx.globalAlpha = flash ? 0.18 : 0.32;
+      ctx.strokeStyle = "#f5c451";
+      ctx.lineWidth = 6;
+      for (let i = -bh; i < bw + bh; i += 22) {
+        ctx.beginPath();
+        ctx.moveTo(bx + i, by);
+        ctx.lineTo(bx + i - bh, by + bh);
+        ctx.stroke();
+      }
+      // per-cell seams + rivets so it reads as fused armor plates
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 1;
+      for (let cx = 0; cx <= g.w; cx++) {
+        ctx.beginPath();
+        ctx.moveTo(px + cx * cell, by);
+        ctx.lineTo(px + cx * cell, by + bh);
+        ctx.stroke();
+      }
+      for (let cy = 0; cy <= g.h; cy++) {
+        ctx.beginPath();
+        ctx.moveTo(bx, py + cy * cell);
+        ctx.lineTo(bx + bw, py + cy * cell);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "rgba(10,16,30,0.8)";
+      for (let cy = 0; cy < g.h; cy++) {
+        for (let cx = 0; cx < g.w; cx++) {
+          ctx.beginPath();
+          ctx.arc(px + (cx + 0.5) * cell, py + (cy + 0.5) * cell, Math.max(1.4, cell * 0.05), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+
+      // bright rim
+      ctx.strokeStyle = flash ? "#ffffff" : "rgba(150,190,255,0.5)";
+      ctx.lineWidth = 1.5;
+      this.roundRect(ctx, bx + 0.8, by + 0.8, bw - 1.6, bh - 1.6, 6);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // Small board title used in versus mode ("YOU" / "CPU").
+  drawLabel(ctx) {
+    ctx.save();
+    ctx.fillStyle = UI.hud;
+    ctx.font = "bold 14px ui-monospace, Menlo, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "bottom";
+    ctx.shadowColor = UI.frameLit;
+    ctx.shadowBlur = 8;
+    ctx.fillText(this.label, this.originX + this.boardW / 2, this.originY - this.cell * 1.9);
+    ctx.restore();
   }
 
   drawBlock(ctx, px, py, b, dim, panic) {
@@ -710,14 +823,15 @@ export class Renderer {
 
   drawDanger(ctx) {
     const a = (Math.sin(this.engine.frame * 0.3) + 1) * 0.5 * 0.18;
+    const r = this.area || { x: 0, y: 0, w: this.W, h: this.H };
     ctx.save();
     ctx.fillStyle = `rgba(255,40,70,${a})`;
-    ctx.fillRect(0, 0, this.W, this.H);
+    ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.globalAlpha = (Math.sin(this.engine.frame * 0.3) + 1) * 0.5;
     ctx.fillStyle = UI.accent;
     ctx.font = "bold 16px ui-monospace, Menlo, monospace";
     ctx.textAlign = "center";
-    ctx.fillText("! WARNING !", this.W / 2, this.originY - this.cell * 0.4);
+    ctx.fillText("! WARNING !", this.originX + this.boardW / 2, this.originY - this.cell * 0.4);
     ctx.restore();
   }
 

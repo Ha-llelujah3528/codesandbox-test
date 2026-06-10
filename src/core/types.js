@@ -22,6 +22,15 @@ export const State = {
   LANDING: 8,
 };
 
+// Garbage-block lifecycle (vs mode). Garbage lives in board.garbages, not in
+// the normal cell grid.
+export const GState = {
+  FALLING: 0, // dropping in from above
+  IDLE: 1, // resting on the stack
+  FLASHING: 2, // triggered by an adjacent clear, about to convert
+  CONVERTING: 3, // bottom row turning into normal blocks
+};
+
 // Event type tags emitted by engine.tick — consumed by render/audio only.
 export const Ev = {
   CURSOR_MOVE: "CURSOR_MOVE",
@@ -36,4 +45,7 @@ export const Ev = {
   DANGER: "DANGER", // {on}
   TOP_OUT: "TOP_OUT",
   LEVEL_UP: "LEVEL_UP", // {level}
+  SEND_GARBAGE: "SEND_GARBAGE", // {w, h} — outgoing garbage for the opponent
+  GARBAGE_LAND: "GARBAGE_LAND", // {x, y, w}
+  GARBAGE_CONVERT: "GARBAGE_CONVERT", // {x, y, w}
 };

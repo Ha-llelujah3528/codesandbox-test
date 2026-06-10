@@ -40,7 +40,7 @@ export class AudioEngine {
 
     // music dry bus
     this.musicGain = ctx.createGain();
-    this.musicGain.gain.value = 0.3;
+    this.musicGain.gain.value = 0.36;
     this.musicGain.connect(this.warm);
 
     // reverb send (generated impulse) for space/richness
@@ -308,51 +308,70 @@ export class AudioEngine {
       // swing: lengthen on-beats, shorten off-beats
       const swing = this.step16 % 2 === 0 ? 1.12 : 0.88;
       this.nextNoteTime += secPer16 * swing;
-      this.step16 = (this.step16 + 1) % 64; // 4 bars of 16
+      this.step16 = (this.step16 + 1) % 128; // 8 bars of 16
     }
   }
 
   _scheduleStep(step, time) {
     if (this.muted) return;
-    const bar = Math.floor(step / 16);
+    const bar = Math.floor(step / 16); // 0..7
     const s = step % 16;
     const sec16 = 60 / this.bpm / 4;
-    // ii–V–I–vi in C with 9th/13th color tones
-    const roots = [50, 43, 48, 45];
-    const chords = [
-      [50, 53, 57, 60, 64], // Dm9
-      [43, 47, 53, 57, 62], // G13
-      [48, 52, 55, 59, 62], // Cmaj9
-      [45, 48, 52, 55, 59], // Am9
+    // 8-bar form: ii–V–I–vi | ii–V–iii–VI7(b9). Lush extended voicings.
+    const PROG = [
+      { root: 50, chord: [50, 53, 57, 60, 64] }, // Dm9
+      { root: 43, chord: [43, 47, 53, 57, 62] }, // G13
+      { root: 48, chord: [48, 52, 55, 59, 62] }, // Cmaj9
+      { root: 45, chord: [45, 48, 52, 55, 59] }, // Am9
+      { root: 50, chord: [50, 53, 57, 60, 64] }, // Dm9
+      { root: 43, chord: [43, 47, 53, 57, 62] }, // G13
+      { root: 52, chord: [52, 55, 59, 62, 66] }, // Em9
+      { root: 45, chord: [45, 49, 55, 58, 61] }, // A7(b9)
     ];
-    const root = roots[bar];
-    const chord = chords[bar];
+    const { root, chord } = PROG[bar];
 
     // lush sustained pad at the top of each bar (through reverb)
     if (s === 0) this._pad(chord, time, sec16 * 16);
 
-    // walking-ish bass
-    if (s === 0) this._bass(this._m2f(root - 12), time, 0.42);
-    else if (s === 4) this._bass(this._m2f(root - 12 + 3), time, 0.24);
-    else if (s === 8) this._bass(this._m2f(root - 12 + 7), time, 0.3);
-    else if (s === 11) this._bass(this._m2f(root - 12 + 10), time, 0.22);
-    else if (s === 14) this._bass(this._m2f(root - 12 + 5), time, 0.2);
+    // walking bass: a quarter-note line with chromatic pickups
+    const walk = [0, 7, 10, 12]; // scale degrees relative to the root each beat
+    if (s % 4 === 0) this._bass(this._m2f(root - 12 + walk[s / 4]), time, 0.42);
+    if (s === 14) this._bass(this._m2f(root - 12 + 11), time, 0.2); // leading-tone pickup
 
-    // Rhodes comping stabs on the off-beats
+    // Rhodes comping on swung off-beats (with light velocity shaping)
     if (s === 2 || s === 7 || s === 10 || s === 13) {
-      for (const m of chord) this._rhodes(this._m2f(m), time, 0.09);
+      const vel = s === 2 || s === 10 ? 0.1 : 0.07;
+      for (const m of chord) this._rhodes(this._m2f(m), time, vel);
     }
 
-    // sparse arpeggio lead in the upper octave (every other bar), through delay
-    if (s % 2 === 1 && bar % 2 === 1) {
-      const note = chord[(s >> 1) % chord.length] + 12;
-      this._arp(this._m2f(note), time, 0.07);
-    }
+    // composed lead melody (upper register, through delay + reverb)
+    const mel = this._leadNote(bar, s, chord);
+    if (mel > 0) this._lead(this._m2f(mel), time, 0.13);
 
-    // swung closed hats + backbeat snare + kick
-    if (s % 2 === 0) this._hat(time, s % 4 === 0 ? 0.1 : 0.06);
-    if (s === 4 || s === 12) this._snare(time);
+    // drums: swung ride, backbeat snare + ghost notes, walking kick
+    if (s % 2 === 0) this._ride(time, s % 4 === 0 ? 0.07 : 0.045);
+    if (s === 4 || s === 12) this._snare(time, 0.14);
+    if (s === 7 || s === 15) this._snare(time, 0.04); // ghost notes
     if (s === 0 || s === 6 || s === 10) this._kick(time);
+  }
+
+  // A singable motif that lands on chord tones; -1 means rest.
+  _leadNote(bar, s, chord) {
+    const top = chord[chord.length - 1] + 12;
+    const third = chord[2] + 12;
+    const fifth = (chord[3] !== undefined ? chord[3] : chord[1]) + 12;
+    const phrases = [
+      { 0: top, 3: third, 6: fifth },
+      { 2: top, 6: third, 10: fifth },
+      { 0: fifth, 4: top, 8: third, 12: fifth },
+      { 4: third, 10: top },
+      { 0: top, 3: third, 6: fifth, 9: top },
+      { 2: fifth, 8: third, 12: top },
+      { 0: top, 4: fifth, 8: third, 12: top },
+      { 2: third, 6: fifth, 10: top, 13: third },
+    ];
+    const p = phrases[bar];
+    return p && p[s] !== undefined ? p[s] : -1;
   }
 
   _pad(chordMidi, t, dur) {
@@ -394,7 +413,65 @@ export class AudioEngine {
     o.stop(t + 0.3);
   }
 
-  _snare(t) {
+  // Warm singing lead: triangle body + sine shimmer + a touch of vibrato,
+  // sent to both delay and reverb so the melody really blooms.
+  _lead(freq, t, peak) {
+    const o = this.ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.value = freq;
+    const shimmer = this.ctx.createOscillator();
+    shimmer.type = "sine";
+    shimmer.frequency.value = freq * 2;
+    const shG = this.ctx.createGain();
+    shG.gain.value = peak * 0.28;
+    // gentle vibrato
+    const vib = this.ctx.createOscillator();
+    vib.type = "sine";
+    vib.frequency.value = 5.2;
+    const vibG = this.ctx.createGain();
+    vibG.gain.value = freq * 0.006;
+    vib.connect(vibG);
+    vibG.connect(o.frequency);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+    o.connect(g);
+    shimmer.connect(shG);
+    shG.connect(g);
+    g.connect(this.musicGain);
+    g.connect(this.delay);
+    g.connect(this.reverb);
+    o.start(t);
+    shimmer.start(t);
+    vib.start(t);
+    o.stop(t + 0.6);
+    shimmer.stop(t + 0.6);
+    vib.stop(t + 0.6);
+  }
+
+  // Ride-cymbal-ish ping: bright filtered noise + a faint metallic tone.
+  _ride(t, peak) {
+    const len = Math.floor(this.ctx.sampleRate * 0.09);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const f = this.ctx.createBiquadFilter();
+    f.type = "highpass";
+    f.frequency.value = 8000;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(peak, t);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + 0.09);
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.musicGain);
+    src.start(t);
+    src.stop(t + 0.09);
+  }
+
+  _snare(t, peak = 0.12) {
     const len = Math.floor(this.ctx.sampleRate * 0.18);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -405,7 +482,7 @@ export class AudioEngine {
     f.type = "highpass";
     f.frequency.value = 1800;
     const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.12, t);
+    g.gain.setValueAtTime(peak, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
     src.connect(f);
     f.connect(g);
@@ -423,14 +500,24 @@ export class AudioEngine {
     const o = this.ctx.createOscillator();
     o.type = "triangle";
     o.frequency.value = freq;
+    // a quiet sine sub an octave down for weight/fullness
+    const sub = this.ctx.createOscillator();
+    sub.type = "sine";
+    sub.frequency.value = freq / 2;
+    const subG = this.ctx.createGain();
+    subG.gain.value = peak * 0.5;
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(peak, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
     o.connect(g);
+    sub.connect(subG);
+    subG.connect(g);
     g.connect(this.musicGain);
     o.start(t);
-    o.stop(t + 0.34);
+    sub.start(t);
+    o.stop(t + 0.36);
+    sub.stop(t + 0.36);
   }
 
   _rhodes(freq, t, peak) {

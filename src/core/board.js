@@ -17,11 +17,32 @@ export function createBoard() {
     nextRow: new Array(GRID_W).fill(Color.NONE),
     riseSub: 0, // 0..RISE_UNIT
     riseStopTimer: 0,
+    garbages: [], // vs-mode garbage rectangles: {id,x,y,w,h,state,timer,fallOff}
   };
 }
 
 export function get(board, x, y) {
   return board.cells[idx(x, y)];
+}
+
+// Does a garbage rectangle cover cell (x,y)? Returns the garbage or null.
+export function garbageAt(board, x, y) {
+  for (const g of board.garbages) {
+    if (x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h) return g;
+  }
+  return null;
+}
+
+// Is cell (x,y) occupied by a settled normal block OR any garbage? Out-of-range
+// below the floor counts as occupied (so things rest on the floor); above the
+// top (y<0) counts as free so garbage can fall in from above.
+export function cellOccupied(board, x, y, ignoreG) {
+  if (y >= GRID_H) return true; // floor
+  if (y < 0) return false; // open sky above the field
+  const b = board.cells[idx(x, y)];
+  if (!isEmpty(b)) return true;
+  const g = garbageAt(board, x, y);
+  return g != null && g !== ignoreG;
 }
 
 // Random color avoiding an immediate horizontal/vertical 3-match at (x,y).
@@ -83,16 +104,25 @@ export function shiftUp(board, rng) {
   for (let x = 0; x < GRID_W; x++) {
     board.cells[idx(x, GRID_H - 1)] = makeBlock(board.nextRow[x]);
   }
+  // the whole field rises, so settled garbage rides up with it
+  for (const g of board.garbages) {
+    if (g.state !== 0 /* GState.FALLING */) g.y -= 1;
+  }
   regenNextRow(board, rng);
   return topOut;
 }
 
-// Highest occupied row (smallest y). GRID_H means empty board.
+// Highest occupied row (smallest y) counting blocks AND settled garbage.
+// GRID_H means empty board.
 export function stackTopRow(board) {
+  let top = GRID_H;
   for (let y = 0; y < GRID_H; y++) {
     for (let x = 0; x < GRID_W; x++) {
       if (!isEmpty(board.cells[idx(x, y)])) return y;
     }
   }
-  return GRID_H;
+  for (const g of board.garbages) {
+    if (g.state !== 0 && g.y < top) top = Math.max(0, g.y);
+  }
+  return top;
 }

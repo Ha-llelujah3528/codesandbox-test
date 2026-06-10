@@ -1,102 +1,151 @@
 import "./styles.css";
-import { Engine } from "./core/engine.js";
 import { InputManager } from "./input/inputManager.js";
 import { ControlConfig } from "./input/controlConfig.js";
-import { Renderer } from "./render/renderer.js";
 import { AudioEngine } from "./audio/audioEngine.js";
 import { initSettings } from "./ui/settings.js";
+import { initMenus } from "./ui/menus.js";
+import { SingleSession, VsSession, DemoSession } from "./session.js";
 
 // ---- bootstrap (the ONLY place that touches the browser clock) ----------
 const canvas = document.getElementById("game");
 const hint = document.getElementById("boot-hint");
+if (hint) hint.style.display = "none"; // the title screen is the start gate now
 
-let seed = (Date.now() & 0xffffffff) >>> 0;
-let engine = new Engine(seed, { startRows: 6 });
 const config = new ControlConfig();
 const input = new InputManager(config);
-const renderer = new Renderer(canvas, engine);
 const audio = new AudioEngine();
 
+let scene = "title"; // 'title' | 'modeselect' | 'play' | 'result'
+let mode = "endless";
+let session = null; // active play session
+let demo = null; // attract-mode demo behind the menus
 let paused = false;
+let settingsActive = false;
+let resultShown = false;
 
-// First interaction boots audio (autoplay policy) and hides the hint.
-input.onFirstInput = () => {
-  audio.start();
-  if (hint) hint.style.display = "none";
-};
-
+// ---- pause -------------------------------------------------------------
 function setPaused(p) {
   paused = p;
-  renderer.paused = p;
-  audio.setPaused(p);
+  if (session) session.setPaused(p);
   const btn = document.getElementById("pause-btn");
   if (btn) btn.textContent = p ? "▶" : "❚❚";
 }
 
-// Controller configuration screen: opening it pauses the game; the layout
-// editor lets the player drag the on-screen pad around freely.
-let settingsActive = false;
+// ---- menus + scenes ----------------------------------------------------
+const menus = initMenus({
+  onBoot: () => audio.start(),
+  onSelectMode: (m) => startMode(m),
+  onRetry: () => startMode(mode),
+  onScene: (s) => {
+    scene = s;
+    if (s === "title" || s === "modeselect") {
+      disposeSession();
+      ensureDemo();
+    }
+  },
+});
+
+function ensureDemo() {
+  if (!demo) demo = new DemoSession({ canvas });
+}
+function disposeDemo() {
+  demo = null;
+}
+function disposeSession() {
+  if (session && session.dispose) session.dispose();
+  session = null;
+}
+
+function startMode(m) {
+  mode = m;
+  disposeDemo();
+  disposeSession();
+  audio.start();
+  if (m === "vs") session = new VsSession({ canvas, audio, input });
+  else session = new SingleSession({ canvas, audio, input, mode: m, target: m === "sprint" ? 3000 : 0 });
+  resultShown = false;
+  scene = "play";
+  paused = false;
+  menus.hideAll();
+  menus.setHud(session.hudHtml());
+}
+
+function finishToResult() {
+  resultShown = true;
+  scene = "result";
+  menus.setHud("");
+  menus.showResult(mode, session.result);
+}
+
+// ---- settings (pauses only while playing) ------------------------------
 initSettings({
   config,
   input,
   onOpen: () => {
     settingsActive = true;
-    setPaused(true);
+    if (scene === "play") setPaused(true);
   },
   onClose: () => {
     settingsActive = false;
-    if (!engine.gameOver) setPaused(false);
+    if (scene === "play" && session && !session.finished) setPaused(false);
   },
 });
 
-// Pause button + P key. Tapping the paused overlay resumes.
+// ---- pause button + keys ----------------------------------------------
 const pauseBtn = document.getElementById("pause-btn");
 if (pauseBtn) {
   pauseBtn.addEventListener("click", (e) => {
     e.preventDefault();
-    if (!engine.gameOver) setPaused(!paused);
+    if (scene === "play" && session && !session.finished) setPaused(!paused);
   });
 }
 canvas.addEventListener("pointerdown", () => {
-  if (paused && !settingsActive) setPaused(false);
+  if (scene === "play" && paused && !settingsActive) setPaused(false);
 });
 
-// Restart on R.
 window.addEventListener("keydown", (e) => {
-  if (e.code === "KeyR") {
-    seed = (seed * 1103515245 + 12345) >>> 0;
-    engine = new Engine(seed, { startRows: 6 });
-    renderer.engine = engine;
-    setPaused(false);
-  }
   if (e.code === "KeyM") audio.toggleMute();
-  if (e.code === "KeyP") {
+  if (e.code === "KeyR" && scene === "play") startMode(mode);
+  if (e.code === "KeyP" && scene === "play" && session && !session.finished) {
     e.preventDefault();
-    if (!engine.gameOver) setPaused(!paused);
+    setPaused(!paused);
+  }
+  // Enter/Space starts from the title
+  if ((e.code === "Enter" || e.code === "Space") && scene === "title") {
+    audio.start();
+    menus.showModeSelect();
   }
 });
 
-// Fixed-timestep loop with accumulator: logic runs at exactly 60Hz regardless
-// of display refresh, keeping the simulation deterministic.
+// ---- fixed-timestep loop ----------------------------------------------
 const STEP = 1000 / 60;
 let acc = 0;
 let last = performance.now();
 
 function frame(now) {
-  acc += Math.min(now - last, 250); // clamp to avoid spiral-of-death
+  acc += Math.min(now - last, 250);
   last = now;
-  if (paused) {
-    acc = 0; // freeze logic while paused
-    input.drainFrameCommands(); // discard buffered input
-  }
   while (acc >= STEP) {
-    const commands = input.drainFrameCommands();
-    engine.tick(commands);
-    renderer.consumeEvents(engine.events);
-    audio.consumeEvents(engine.events);
+    if (scene === "play" && session) {
+      session.stepFrame(paused);
+      if (mode === "sprint" && !paused) menus.setHud(session.hudHtml());
+      if (session.finished && !resultShown) finishToResult();
+    } else if (scene === "result" && session) {
+      input.drainFrameCommands(); // freeze, just flush input
+    } else {
+      if (demo) demo.stepFrame();
+      else input.drainFrameCommands();
+    }
     acc -= STEP;
   }
-  renderer.draw();
+
+  if ((scene === "play" || scene === "result") && session) session.render();
+  else if (demo) demo.render();
+
   requestAnimationFrame(frame);
 }
+
+// open on the title screen with the attract demo running behind it
+ensureDemo();
+menus.showTitle();
 requestAnimationFrame(frame);

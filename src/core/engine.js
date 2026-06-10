@@ -10,8 +10,16 @@ import {
   stackTopRow,
 } from "./board.js";
 import { isEmpty, isClearing, clearBlock } from "./block.js";
+import { cellOccupied } from "./board.js";
 import { findMatches } from "./matcher.js";
 import { Cmd } from "./commands.js";
+import {
+  spawnGarbage,
+  advanceGarbageGravity,
+  advanceGarbageTransform,
+  triggerGarbage,
+  garbageBusy,
+} from "./garbage.js";
 
 // The deterministic game core. Advances only via tick(commands). No browser,
 // no wall clock, no Math.random — all randomness flows through the seeded RNG.
@@ -33,6 +41,10 @@ export class Engine {
     this.danger = false;
     this.events = [];
 
+    // versus garbage
+    this.incoming = []; // queued garbage specs waiting to drop
+    this.nextGid = 1;
+
     const startRows = opts.startRows || 6;
     fillStartStack(this.board, this.rng, startRows);
   }
@@ -50,8 +62,11 @@ export class Engine {
     this.applyCommands(commands);
     this.advanceSwap();
     this.advanceClearTimeline();
+    advanceGarbageTransform(this);
     const settled = this.advanceGravity();
+    advanceGarbageGravity(this);
     this.detectMatches(settled);
+    spawnGarbage(this);
     this.advanceRising();
     if (this.checkTopOut()) return; // instant game over the moment we touch the line
     this.resolveChainAndDanger();
@@ -189,8 +204,8 @@ export class Engine {
         const b = get(board, x, y);
         if (isEmpty(b) || isClearing(b) || b.state === State.SWAPPING) continue;
         const onFloor = y === C.GRID_H - 1;
-        const below = onFloor ? null : get(board, x, y + 1);
-        const supported = onFloor || !isEmpty(below);
+        // a normal block is held up by the floor, another block, OR a garbage
+        const supported = onFloor || cellOccupied(board, x, y + 1);
         if (!supported) {
           if (b.state === State.IDLE || b.state === State.LANDING) {
             b.state = State.FALLING;
@@ -244,6 +259,9 @@ export class Engine {
         b.popCount = total;
       });
 
+      // an adjacent match detonates resting garbage
+      triggerGarbage(this, matches);
+
       // scoring
       this.score += total * C.BLOCK_CLEAR_SCORE;
       if (total >= 4) {
@@ -254,6 +272,8 @@ export class Engine {
           x: matches[0] % C.GRID_W,
           y: Math.floor(matches[0] / C.GRID_W),
         });
+        // a big simultaneous clear sends a wide, 1-row garbage slab
+        this.emit(Ev.SEND_GARBAGE, { w: Math.min(total - 1, C.GRID_W), h: 1 });
       }
       if (this.chainCounter >= 2) {
         this.score +=
@@ -263,6 +283,8 @@ export class Engine {
           x: matches[0] % C.GRID_W,
           y: Math.floor(matches[0] / C.GRID_W),
         });
+        // deeper chains send taller full-width garbage
+        this.emit(Ev.SEND_GARBAGE, { w: C.GRID_W, h: Math.min(this.chainCounter - 1, 6) });
       }
       this.emit(Ev.MATCH, {
         count: total,
@@ -295,7 +317,10 @@ export class Engine {
     if (board.riseStopTimer > 0) board.riseStopTimer--;
 
     const blocked =
-      board.riseStopTimer > 0 || this.anyClearing() || this.activeSwap != null;
+      board.riseStopTimer > 0 ||
+      this.anyClearing() ||
+      this.activeSwap != null ||
+      garbageBusy(board);
     if (blocked) return;
 
     let rate = C.RISE_BASE + (this.level - 1) * C.RISE_PER_LEVEL;
@@ -353,7 +378,7 @@ export class Engine {
   }
 
   chainLive() {
-    return this.anyClearing() || this.anyChainFlag();
+    return this.anyClearing() || this.anyChainFlag() || garbageBusy(this.board);
   }
 }
 

@@ -320,6 +320,9 @@ body.show-touch #touch-controls {
   cursor: pointer;
 }
 /* While editing, the clusters become draggable surfaces with a dashed hint. */
+body.layout-edit #touch-controls {
+  z-index: 25; /* lift above the menu/title overlay so it stays draggable */
+}
 body.layout-edit #touch-controls .dpad,
 body.layout-edit #touch-controls .actions {
   pointer-events: auto;
@@ -328,4 +331,211 @@ body.layout-edit #touch-controls .actions {
   outline-offset: 6px;
   border-radius: 14px;
   cursor: move;
+}
+
+/* hide the pause button while a menu is up */
+body.in-menu #pause-btn {
+  display: none;
+}
+
+/* ===== scenes: title / mode select / result ===== */
+.menu-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px;
+  text-align: center;
+  background: radial-gradient(120% 120% at 50% 0%, rgba(12, 26, 60, 0.82), rgba(3, 5, 12, 0.92));
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.menu-screen.hidden {
+  display: none;
+}
+
+.title-logo {
+  font-weight: 900;
+  font-size: clamp(34px, 11vw, 64px);
+  letter-spacing: 4px;
+  line-height: 0.95;
+  color: #eaf4ff;
+  text-shadow: 0 0 18px rgba(80, 170, 255, 0.8), 0 0 4px #fff;
+}
+.title-logo span {
+  display: block;
+  color: var(--accent);
+  text-shadow: 0 0 18px rgba(255, 60, 110, 0.85);
+}
+.title-sub {
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: #9fd9ff;
+  opacity: 0.9;
+}
+.title-hint {
+  position: absolute;
+  bottom: 26px;
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: rgba(160, 210, 255, 0.6);
+}
+
+.big-btn {
+  font-family: inherit;
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: 3px;
+  color: #06121f;
+  background: linear-gradient(180deg, #7cc0ff, #2f86e6);
+  border: none;
+  border-radius: 14px;
+  padding: 16px 46px;
+  cursor: pointer;
+  box-shadow: 0 0 26px rgba(60, 150, 255, 0.6), inset 0 2px 0 rgba(255, 255, 255, 0.5);
+  animation: pulseGlow 1.6s ease-in-out infinite;
+}
+@keyframes pulseGlow {
+  50% { box-shadow: 0 0 40px rgba(90, 180, 255, 0.95), inset 0 2px 0 rgba(255, 255, 255, 0.5); }
+}
+.big-btn:active {
+  transform: translateY(2px);
+  filter: brightness(1.1);
+}
+
+.menu-title {
+  font-size: 22px;
+  letter-spacing: 4px;
+  color: #eaf4ff;
+  text-shadow: 0 0 14px rgba(80, 170, 255, 0.7);
+  margin: 0;
+}
+.mode-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 360px;
+}
+.mode-card {
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 16px 20px;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 200, 255, 0.45);
+  background: linear-gradient(160deg, rgba(24, 48, 96, 0.75), rgba(8, 16, 40, 0.75));
+  color: #dcebff;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.06s, border-color 0.1s, box-shadow 0.1s;
+}
+.mode-card b {
+  font-size: 20px;
+  letter-spacing: 2px;
+  color: #fff;
+}
+.mode-card span {
+  font-size: 12px;
+  color: #9fd9ff;
+}
+.mode-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 22px rgba(80, 160, 255, 0.45);
+}
+.mode-card:active {
+  transform: scale(0.98);
+}
+
+.menu-btn-sm {
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #bfe0ff;
+  background: rgba(10, 20, 44, 0.7);
+  border: 1px solid rgba(120, 200, 255, 0.4);
+  border-radius: 10px;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+.menu-btn-sm:active {
+  filter: brightness(1.4);
+}
+
+.result-headline {
+  font-weight: 900;
+  font-size: clamp(34px, 10vw, 56px);
+  letter-spacing: 3px;
+}
+.result-headline.win {
+  color: #7dffb0;
+  text-shadow: 0 0 22px rgba(60, 255, 150, 0.8);
+}
+.result-headline.lose {
+  color: #ff6b8a;
+  text-shadow: 0 0 22px rgba(255, 60, 110, 0.8);
+}
+.result-headline.neutral {
+  color: #eaf4ff;
+  text-shadow: 0 0 18px rgba(80, 170, 255, 0.7);
+}
+.result-stats {
+  display: flex;
+  gap: 26px;
+}
+.result-stats .stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.result-stats .stat label {
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: #8aa0c0;
+}
+.result-stats .stat span {
+  font-size: 26px;
+  font-weight: 800;
+  color: #eaf4ff;
+}
+.result-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+}
+.result-sub-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* in-play mode HUD (target / time / vs) */
+#mode-hud {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  gap: 16px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  background: rgba(8, 18, 40, 0.7);
+  border: 1px solid rgba(120, 200, 255, 0.35);
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: #cfeaff;
+  white-space: nowrap;
+}
+#mode-hud.hidden {
+  display: none;
+}
+#mode-hud b {
+  color: #fff;
 }
