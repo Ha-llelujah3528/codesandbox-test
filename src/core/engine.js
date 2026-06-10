@@ -132,6 +132,8 @@ export class Engine {
     if (!this.swappable(a) || !this.swappable(b)) return;
     // don't allow swapping two empties (no-op)
     if (isEmpty(a) && isEmpty(b)) return;
+    // don't let a panel slide into a cell occupied by garbage (would overlap)
+    if (garbageAt(this.board, x, y) || garbageAt(this.board, x + 1, y)) return;
     a.state = State.SWAPPING;
     b.state = State.SWAPPING;
     a.timer = C.SWAP_TIME;
@@ -206,6 +208,9 @@ export class Engine {
     let anyFalling = false;
     const chainContext = this.chainActive;
     if (!board.colFall) board.colFall = new Array(C.GRID_W).fill(0);
+    // Hold all falling until every popping panel has finished clearing, so the
+    // panels riding on top only begin to drop once the clear is fully done.
+    if (this.anyClearing()) return false;
 
     for (let x = 0; x < C.GRID_W; x++) {
       // settle destination of each movable block; walls = garbage / clearing /
