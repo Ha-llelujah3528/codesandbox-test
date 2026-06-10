@@ -22,34 +22,19 @@ function keyLabel(code) {
     .replace("ControlRight", "CTRL-R");
 }
 
-// Position the two on-screen control clusters from the saved layout.
+// Position every on-screen button individually from the saved layout (each
+// D-pad arrow and action button can live anywhere).
 export function applyTouchLayout(config) {
   const L = config.layout;
-  const tc = document.getElementById("touch-controls");
-  const dpad = document.querySelector("#touch-controls .dpad");
-  const actions = document.querySelector("#touch-controls .actions");
-  if (!tc || !dpad || !actions) return;
-  tc.style.flexDirection = L.swapped ? "row-reverse" : "row";
-  for (const [el, key, origin] of [
-    [dpad, "dpad", "left bottom"],
-    [actions, "actions", "right bottom"],
-  ]) {
-    const pos = L[key];
-    if (pos) {
-      el.style.position = "fixed";
-      el.style.left = pos.xPct + "%";
-      el.style.top = pos.yPct + "%";
-      el.style.right = "auto";
-      el.style.bottom = "auto";
-      el.style.transform = `translate(-50%,-50%) scale(${L.scale})`;
-      el.style.transformOrigin = "center";
-    } else {
-      el.style.position = "";
-      el.style.left = el.style.top = el.style.right = el.style.bottom = "";
-      el.style.transform = `scale(${L.scale})`;
-      el.style.transformOrigin = origin;
-    }
-  }
+  document.querySelectorAll("#touch-controls [data-act]").forEach((el) => {
+    const pos = L.buttons[el.dataset.act];
+    if (!pos) return;
+    el.style.position = "fixed";
+    el.style.left = pos.xPct + "%";
+    el.style.top = pos.yPct + "%";
+    el.style.margin = "0";
+    el.style.transform = `translate(-50%,-50%) scale(${L.scale})`;
+  });
 }
 
 export function initSettings({ config, input, onOpen, onClose }) {
@@ -91,7 +76,7 @@ export function initSettings({ config, input, onOpen, onClose }) {
       <div class="opt-row">
         <span>ボタン配置</span>
         <div class="seg">
-          <button id="layout-edit">ドラッグで配置</button>
+          <button id="layout-edit">1つずつ配置</button>
           <button id="layout-reset">配置リセット</button>
         </div>
       </div>
@@ -107,7 +92,7 @@ export function initSettings({ config, input, onOpen, onClose }) {
   const editBar = document.createElement("div");
   editBar.id = "layout-edit-bar";
   editBar.className = "hidden";
-  editBar.innerHTML = `<span>コントローラーをドラッグして配置</span><button id="layout-done">完了</button>`;
+  editBar.innerHTML = `<span>各ボタンを個別にドラッグ（十字キーも1つずつ）</span><button id="layout-done">完了</button>`;
   document.body.appendChild(editBar);
 
   const keyList = overlay.querySelector(".key-list");
@@ -210,25 +195,26 @@ export function initSettings({ config, input, onOpen, onClose }) {
     setEditMode(false);
   });
 
+  // ---- per-button drag-to-place (each D-pad arrow + action, individually) --
   let drag = null;
   const pointOf = (e) => {
     const p = e.touches ? e.touches[0] : e;
     return { x: p.clientX, y: p.clientY };
   };
-  function startDrag(el, which, e) {
+  function startDrag(act, e) {
     if (!editMode) return;
     e.preventDefault();
     e.stopPropagation();
-    drag = { el, which };
+    drag = { act };
     moveDrag(e);
   }
   function moveDrag(e) {
     if (!drag) return;
     e.preventDefault();
     const { x, y } = pointOf(e);
-    const xPct = Math.max(8, Math.min(92, (x / window.innerWidth) * 100));
-    const yPct = Math.max(12, Math.min(92, (y / window.innerHeight) * 100));
-    config.layout[drag.which] = { xPct, yPct }; // mutate live; persist on release
+    const xPct = Math.max(5, Math.min(95, (x / window.innerWidth) * 100));
+    const yPct = Math.max(8, Math.min(95, (y / window.innerHeight) * 100));
+    config.layout.buttons[drag.act] = { xPct, yPct }; // live; persist on release
     applyTouchLayout(config);
   }
   function endDrag() {
@@ -237,14 +223,12 @@ export function initSettings({ config, input, onOpen, onClose }) {
     config.save();
   }
 
-  for (const [sel, which] of [[".dpad", "dpad"], [".actions", "actions"]]) {
-    const el = document.querySelector("#touch-controls " + sel);
-    if (!el) continue;
-    const down = (e) => startDrag(el, which, e);
+  document.querySelectorAll("#touch-controls [data-act]").forEach((el) => {
+    const down = (e) => startDrag(el.dataset.act, e);
     // capture phase so the buttons' own press handlers don't fire while editing
     el.addEventListener("mousedown", down, true);
     el.addEventListener("touchstart", down, { capture: true, passive: false });
-  }
+  });
   window.addEventListener("mousemove", moveDrag);
   window.addEventListener("touchmove", moveDrag, { passive: false });
   window.addEventListener("mouseup", endDrag);

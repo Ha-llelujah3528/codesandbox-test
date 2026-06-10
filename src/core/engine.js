@@ -10,7 +10,7 @@ import {
   stackTopRow,
 } from "./board.js";
 import { isEmpty, isClearing, clearBlock } from "./block.js";
-import { cellOccupied } from "./board.js";
+import { cellOccupied, garbageAt } from "./board.js";
 import { findMatches } from "./matcher.js";
 import { Cmd } from "./commands.js";
 import {
@@ -194,40 +194,77 @@ export class Engine {
   }
 
   // 4. gravity ----------------------------------------------------------
+  // Column-based gravity: a contiguous stack of unsupported blocks falls in
+  // UNISON (shared per-column offset), so e.g. a 2-tall drop onto a matching
+  // 2-tall stack lands all four on the same tick and registers as one clear.
   // Returns true if anything is still falling (for chain bookkeeping).
   advanceGravity() {
     const board = this.board;
     let anyFalling = false;
     const chainContext = this.chainActive;
+    if (!board.colFall) board.colFall = new Array(C.GRID_W).fill(0);
+
     for (let x = 0; x < C.GRID_W; x++) {
+      // settle destination of each movable block; walls = garbage / clearing /
+      // swapping blocks; floor sits just below row GRID_H-1.
+      const dest = new Array(C.GRID_H).fill(-1);
+      let floorY = C.GRID_H;
+      let hasFaller = false;
       for (let y = C.GRID_H - 1; y >= 0; y--) {
+        if (garbageAt(board, x, y)) { floorY = y; continue; }
         const b = get(board, x, y);
-        if (isEmpty(b) || isClearing(b) || b.state === State.SWAPPING) continue;
-        const onFloor = y === C.GRID_H - 1;
-        // a normal block is held up by the floor, another block, OR a garbage
-        const supported = onFloor || cellOccupied(board, x, y + 1);
-        if (!supported) {
+        if (isEmpty(b)) continue;
+        if (isClearing(b) || b.state === State.SWAPPING) { floorY = y; continue; }
+        const d = floorY - 1;
+        dest[y] = d;
+        if (d > y) hasFaller = true;
+        floorY = d;
+      }
+
+      if (!hasFaller) {
+        board.colFall[x] = 0;
+        // nothing left to fall: anything still flagged FALLING has landed
+        for (let y = 0; y < C.GRID_H; y++) {
+          const b = get(board, x, y);
+          if (b.state === State.FALLING) {
+            b.state = State.LANDING;
+            b.timer = C.LAND_TIME;
+            b.fallOffset = 0;
+          }
+        }
+        continue;
+      }
+
+      anyFalling = true;
+      // mark the whole faller set FALLING up front so they animate together
+      for (let y = 0; y < C.GRID_H; y++) {
+        if (dest[y] > y) {
+          const b = get(board, x, y);
           if (b.state === State.IDLE || b.state === State.LANDING) {
             b.state = State.FALLING;
             if (chainContext) b.chaining = true;
           }
-          if (b.state === State.FALLING) {
-            b.fallOffset += C.FALL_INC;
-            anyFalling = true;
-            if (b.fallOffset >= C.FALL_UNIT) {
-              b.fallOffset -= C.FALL_UNIT;
-              // move block down one cell
-              const dst = get(board, x, y + 1);
-              copyCell(dst, b);
+        }
+      }
+
+      let off = board.colFall[x] + C.FALL_INC;
+      if (off >= C.FALL_UNIT) {
+        off -= C.FALL_UNIT;
+        // shift every faller down one row, bottom-to-top so cells vacate first
+        for (let y = C.GRID_H - 1; y >= 0; y--) {
+          if (dest[y] > y) {
+            const b = get(board, x, y);
+            if (isEmpty(get(board, x, y + 1)) && !garbageAt(board, x, y + 1)) {
+              copyCell(get(board, x, y + 1), b);
               clearBlock(b);
             }
           }
-        } else if (b.state === State.FALLING) {
-          // just landed
-          b.state = State.LANDING;
-          b.timer = C.LAND_TIME;
-          b.fallOffset = 0;
         }
+      }
+      board.colFall[x] = off;
+      for (let y = 0; y < C.GRID_H; y++) {
+        const b = get(board, x, y);
+        if (b.state === State.FALLING) b.fallOffset = off;
       }
     }
     return anyFalling;
@@ -298,6 +335,14 @@ export class Engine {
         this.board.riseStopTimer,
         C.FLASH_TIME + C.FACE_TIME + total * C.POP_TIME + C.CLEAR_STOP_GRACE
       );
+
+      // breathing room: a combo (4+) or a chain grants EXTRA rise-stop time
+      // scaled by its size — most valuable when the stack is near the top.
+      let bonus = 0;
+      if (this.chainCounter >= 2) bonus += this.chainCounter * C.CHAIN_STOP_BONUS;
+      if (total >= 4) bonus += (total - 3) * C.COMBO_STOP_BONUS;
+      if (this.danger) bonus = Math.floor(bonus * C.DANGER_STOP_MULT); // panic relief
+      this.board.riseStopTimer += bonus;
     }
 
     // clear chain flags on blocks that settled this tick without matching
@@ -330,6 +375,9 @@ export class Engine {
     if (board.riseSub >= C.RISE_UNIT) {
       board.riseSub -= C.RISE_UNIT;
       const topOut = shiftUp(board, this.rng);
+      // the whole field rose one row, so keep the cursor on the same panels
+      // (follow the stack up) instead of letting it drift down a row.
+      if (this.cursor.y > 0) this.cursor.y -= 1;
       if (topOut) {
         this.gameOver = true;
         this.emit(Ev.TOP_OUT, {});

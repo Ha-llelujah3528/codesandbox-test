@@ -323,13 +323,12 @@ body.show-touch #touch-controls {
 body.layout-edit #touch-controls {
   z-index: 25; /* lift above the menu/title overlay so it stays draggable */
 }
-body.layout-edit #touch-controls .dpad,
-body.layout-edit #touch-controls .actions {
+/* in edit mode each individual button (incl. each D-pad arrow) is draggable */
+body.layout-edit #touch-controls [data-act] {
   pointer-events: auto;
   touch-action: none;
-  outline: 2px dashed rgba(120, 200, 255, 0.8);
-  outline-offset: 6px;
-  border-radius: 14px;
+  outline: 2px dashed rgba(120, 200, 255, 0.85);
+  outline-offset: 3px;
   cursor: move;
 }
 

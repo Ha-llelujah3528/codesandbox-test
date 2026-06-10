@@ -25,10 +25,16 @@ export function get(board, x, y) {
   return board.cells[idx(x, y)];
 }
 
-// Does a garbage rectangle cover cell (x,y)? Returns the garbage or null.
+// Does a garbage rectangle still cover cell (x,y)? Cells already "unzipped"
+// into normal panels during conversion no longer count. Returns garbage|null.
 export function garbageAt(board, x, y) {
   for (const g of board.garbages) {
-    if (x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h) return g;
+    if (x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h) {
+      // reveal order: bottom row first, left-to-right, going up
+      const order = (g.y + g.h - 1 - y) * g.w + (x - g.x);
+      if ((g.revealed || 0) > order) continue; // already converted to a panel
+      return g;
+    }
   }
   return null;
 }
@@ -112,17 +118,20 @@ export function shiftUp(board, rng) {
   return topOut;
 }
 
-// Highest occupied row (smallest y) counting blocks AND settled garbage.
-// GRID_H means empty board.
+// Highest occupied row (smallest y) counting blocks AND settled garbage
+// (garbage still falling in from above does not count). GRID_H means empty.
 export function stackTopRow(board) {
   let top = GRID_H;
   for (let y = 0; y < GRID_H; y++) {
+    let found = false;
     for (let x = 0; x < GRID_W; x++) {
-      if (!isEmpty(board.cells[idx(x, y)])) return y;
+      if (!isEmpty(board.cells[idx(x, y)])) { found = true; break; }
     }
+    if (found) { top = y; break; }
   }
+  // settled garbage can reach the ceiling too — a landed slab at row 0 tops out
   for (const g of board.garbages) {
-    if (g.state !== 0 && g.y < top) top = Math.max(0, g.y);
+    if (g.state !== 0 /* GState.FALLING */) top = Math.min(top, Math.max(0, g.y));
   }
   return top;
 }

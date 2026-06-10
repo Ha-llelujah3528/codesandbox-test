@@ -80,7 +80,8 @@ export class Renderer {
           break;
         case Ev.COMBO:
           this.shake = Math.min(this.shake + 3, 16);
-          if (!this.bannerText) this.banner(`COMBO ${e.count}`);
+          // always show it; a CHAIN_LINK later this tick will override it
+          this.banner(`COMBO ${e.count}`);
           break;
         case Ev.TOP_OUT:
           this.shake = 26;
@@ -384,84 +385,96 @@ export class Renderer {
     }
   }
 
-  // Heavy armored "おじゃま" slabs that drop on the opponent in vs mode.
+  // Heavy armored "おじゃま" panels (vs mode). Drawn per-cell so they can
+  // "unzip" one panel at a time during conversion; each wears a grumpy face.
   drawGarbage(ctx) {
     const cell = this.cell;
     for (const g of this.engine.board.garbages) {
       const fall = (g.fallOff / C.FALL_UNIT) * cell;
-      const px = this.originX + g.x * cell;
-      const py = this.originY + g.y * cell - this.riseFrac() * cell + fall;
-      const w = g.w * cell;
-      const h = g.h * cell;
-      const flashing = g.state === GState.FLASHING;
-      const flash = flashing && (this.engine.frame >> 1) % 2 === 0;
-      const pad = 2.5;
-      const bx = px + pad, by = py + pad, bw = w - pad * 2, bh = h - pad * 2;
-
-      ctx.save();
-      ctx.shadowColor = flash ? "#ffffff" : "rgba(0,0,0,0.6)";
-      ctx.shadowBlur = flash ? 26 : 10;
-      const grad = ctx.createLinearGradient(bx, by, bx, by + bh);
-      if (flash) {
-        grad.addColorStop(0, "#ffffff");
-        grad.addColorStop(1, "#cfe0ff");
-      } else {
-        grad.addColorStop(0, "#67738f");
-        grad.addColorStop(0.5, "#3a445d");
-        grad.addColorStop(1, "#202739");
-      }
-      ctx.fillStyle = grad;
-      this.roundRect(ctx, bx, by, bw, bh, 7);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-
-      // interior detailing, clipped to the slab
-      ctx.save();
-      this.roundRect(ctx, bx, by, bw, bh, 7);
-      ctx.clip();
-      // hazard stripes
-      ctx.globalAlpha = flash ? 0.18 : 0.32;
-      ctx.strokeStyle = "#f5c451";
-      ctx.lineWidth = 6;
-      for (let i = -bh; i < bw + bh; i += 22) {
-        ctx.beginPath();
-        ctx.moveTo(bx + i, by);
-        ctx.lineTo(bx + i - bh, by + bh);
-        ctx.stroke();
-      }
-      // per-cell seams + rivets so it reads as fused armor plates
-      ctx.globalAlpha = 0.5;
-      ctx.strokeStyle = "rgba(0,0,0,0.5)";
-      ctx.lineWidth = 1;
-      for (let cx = 0; cx <= g.w; cx++) {
-        ctx.beginPath();
-        ctx.moveTo(px + cx * cell, by);
-        ctx.lineTo(px + cx * cell, by + bh);
-        ctx.stroke();
-      }
-      for (let cy = 0; cy <= g.h; cy++) {
-        ctx.beginPath();
-        ctx.moveTo(bx, py + cy * cell);
-        ctx.lineTo(bx + bw, py + cy * cell);
-        ctx.stroke();
-      }
-      ctx.fillStyle = "rgba(10,16,30,0.8)";
-      for (let cy = 0; cy < g.h; cy++) {
-        for (let cx = 0; cx < g.w; cx++) {
-          ctx.beginPath();
-          ctx.arc(px + (cx + 0.5) * cell, py + (cy + 0.5) * cell, Math.max(1.4, cell * 0.05), 0, Math.PI * 2);
-          ctx.fill();
+      const flash = g.state === GState.FLASHING && (this.engine.frame >> 2) % 2 === 0;
+      for (let ry = 0; ry < g.h; ry++) {
+        for (let rx = 0; rx < g.w; rx++) {
+          const cx = g.x + rx;
+          const cy = g.y + ry;
+          // skip cells already unzipped into normal panels
+          const order = (g.h - 1 - ry) * g.w + rx;
+          if ((g.revealed || 0) > order) continue;
+          this.drawGarbageCell(
+            ctx,
+            this.originX + cx * cell,
+            this.originY + cy * cell - this.riseFrac() * cell + fall,
+            flash,
+            { top: ry === 0, bottom: ry === g.h - 1, left: rx === 0, right: rx === g.w - 1 }
+          );
         }
       }
-      ctx.restore();
-
-      // bright rim
-      ctx.strokeStyle = flash ? "#ffffff" : "rgba(150,190,255,0.5)";
-      ctx.lineWidth = 1.5;
-      this.roundRect(ctx, bx + 0.8, by + 0.8, bw - 1.6, bh - 1.6, 6);
-      ctx.stroke();
-      ctx.restore();
     }
+  }
+
+  drawGarbageCell(ctx, px, py, flash, edge) {
+    const cell = this.cell;
+    const pad = 1.5;
+    const x = px + pad, y = py + pad, s = cell - pad * 2;
+    ctx.save();
+    ctx.shadowColor = flash ? "#ffffff" : "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = flash ? 22 : 7;
+    const grad = ctx.createLinearGradient(x, y, x, y + s);
+    if (flash) {
+      grad.addColorStop(0, "#ffffff");
+      grad.addColorStop(1, "#d6e6ff");
+    } else {
+      grad.addColorStop(0, "#6b7790");
+      grad.addColorStop(0.5, "#3c465f");
+      grad.addColorStop(1, "#212838");
+    }
+    ctx.fillStyle = grad;
+    this.roundRect(ctx, x, y, s, s, 4);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // rivets in the corners + a center seam dot (mecha bolts)
+    ctx.fillStyle = "rgba(8,14,28,0.85)";
+    for (const [fx, fy] of [[0.18, 0.18], [0.82, 0.18], [0.18, 0.82], [0.82, 0.82]]) {
+      ctx.beginPath();
+      ctx.arc(x + s * fx, y + s * fy, Math.max(1, s * 0.045), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // grumpy face
+    this.drawGarbageFace(ctx, x, y, s, flash);
+    // bright rim
+    ctx.strokeStyle = flash ? "#ffffff" : "rgba(150,190,255,0.45)";
+    ctx.lineWidth = 1.2;
+    this.roundRect(ctx, x + 0.6, y + 0.6, s - 1.2, s - 1.2, 3.5);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // A grumpy little face so garbage panels read as menacing "enemies".
+  drawGarbageFace(ctx, x, y, s, flash) {
+    ctx.save();
+    ctx.strokeStyle = flash ? "#3a4a66" : "#0c1424";
+    ctx.fillStyle = flash ? "#3a4a66" : "#0c1424";
+    ctx.lineWidth = Math.max(1.4, s * 0.045);
+    ctx.lineCap = "round";
+    const ey = y + s * 0.42;
+    // angry slanted brows
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.26, ey - s * 0.12);
+    ctx.lineTo(x + s * 0.42, ey - s * 0.02);
+    ctx.moveTo(x + s * 0.74, ey - s * 0.12);
+    ctx.lineTo(x + s * 0.58, ey - s * 0.02);
+    ctx.stroke();
+    // eyes
+    ctx.beginPath();
+    ctx.arc(x + s * 0.36, ey + s * 0.06, Math.max(1.2, s * 0.05), 0, Math.PI * 2);
+    ctx.arc(x + s * 0.64, ey + s * 0.06, Math.max(1.2, s * 0.05), 0, Math.PI * 2);
+    ctx.fill();
+    // flat grimace
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.36, y + s * 0.72);
+    ctx.lineTo(x + s * 0.64, y + s * 0.72);
+    ctx.stroke();
+    ctx.restore();
   }
 
   // Small board title used in versus mode ("YOU" / "CPU").
@@ -803,7 +816,10 @@ export class Renderer {
   }
 
   drawBanner(ctx) {
-    if (this.bannerLife <= 0) return;
+    if (this.bannerLife <= 0) {
+      this.bannerText = ""; // clear so the next COMBO/CHAIN always shows
+      return;
+    }
     this.bannerLife--;
     const t = this.bannerLife / 70;
     ctx.save();
@@ -811,9 +827,12 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     const scale = 1 + (1 - t) * 0.4;
-    ctx.translate(this.W / 2, this.originY + this.boardH * 0.4);
+    // center on THIS board (not the whole screen) so vs banners don't spill
+    // onto the opponent's side; size the font to the board width so it fits.
+    ctx.translate(this.originX + this.boardW / 2, this.originY + this.boardH * 0.4);
     ctx.scale(scale, scale);
-    ctx.font = "bold 40px ui-monospace, Menlo, monospace";
+    const fs = Math.max(18, Math.min(40, this.boardW / Math.max(6, this.bannerText.length) * 1.5));
+    ctx.font = `bold ${fs}px ui-monospace, Menlo, monospace`;
     ctx.fillStyle = "#fff";
     ctx.shadowColor = UI.accent;
     ctx.shadowBlur = 24;

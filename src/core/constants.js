@@ -23,6 +23,11 @@ export const FACE_TIME = 16; // shared "face" hold before popping starts
 export const POP_TIME = 9; // frames between each block popping (stagger)
 // stop-time (rise pauses) lasts the whole clear + this grace, scaled by size/chain
 export const CLEAR_STOP_GRACE = 12;
+// extra rise-stop frames granted per chain link / per combo block over 3,
+// with a multiplier while in the danger zone (gives you a chance to dig out).
+export const CHAIN_STOP_BONUS = 45; // frames per chain link (0.75s each)
+export const COMBO_STOP_BONUS = 24; // frames per block beyond 3 in a combo
+export const DANGER_STOP_MULT = 2; // doubled while panicking near the top
 
 // --- Gravity / falling (sub-cell fixed point, 16 = one full cell) ---
 export const FALL_UNIT = 16;

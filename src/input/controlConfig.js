@@ -23,16 +23,36 @@ const DEFAULT_KEYS = {
   raise: ["ShiftLeft", "ShiftRight", "KeyK"],
 };
 
-const DEFAULT_LAYOUT = {
-  scale: 1,
-  swapped: false, // false: D-pad left / actions right (right-handed)
-  dpad: null, // {xPct,yPct} free position, or null for CSS default
-  actions: null,
+// Every on-screen button is freely placeable (incl. each D-pad arrow). Default
+// positions are viewport percentages; left-handed mirrors them horizontally.
+const RIGHT_DEFAULTS = {
+  up: { xPct: 16, yPct: 66 },
+  down: { xPct: 16, yPct: 88 },
+  left: { xPct: 7, yPct: 77 },
+  right: { xPct: 25, yPct: 77 },
+  raise: { xPct: 86, yPct: 64 },
+  swap: { xPct: 86, yPct: 84 },
 };
 
 function clone(o) {
   return JSON.parse(JSON.stringify(o));
 }
+
+function mirror(set) {
+  const m = {};
+  for (const k of Object.keys(set)) m[k] = { xPct: 100 - set[k].xPct, yPct: set[k].yPct };
+  return m;
+}
+
+export function defaultButtons(swapped) {
+  return swapped ? mirror(RIGHT_DEFAULTS) : clone(RIGHT_DEFAULTS);
+}
+
+const DEFAULT_LAYOUT = {
+  scale: 1,
+  swapped: false, // false: D-pad left / actions right (right-handed)
+  buttons: clone(RIGHT_DEFAULTS), // per-button {xPct,yPct}
+};
 
 export class ControlConfig {
   constructor() {
@@ -48,7 +68,11 @@ export class ControlConfig {
       if (!raw) return;
       const data = JSON.parse(raw);
       if (data.keys) this.keys = { ...clone(DEFAULT_KEYS), ...data.keys };
-      if (data.layout) this.layout = { ...clone(DEFAULT_LAYOUT), ...data.layout };
+      if (data.layout) {
+        this.layout = { ...clone(DEFAULT_LAYOUT), ...data.layout };
+        // ensure every button has a position (fill any missing from defaults)
+        this.layout.buttons = { ...defaultButtons(this.layout.swapped), ...(data.layout.buttons || {}) };
+      }
     } catch (e) {
       /* ignore corrupt storage */
     }
@@ -86,7 +110,7 @@ export class ControlConfig {
   }
 
   resetLayout() {
-    this.layout = clone(DEFAULT_LAYOUT);
+    this.layout.buttons = defaultButtons(this.layout.swapped);
     this.save();
   }
 
@@ -97,11 +121,13 @@ export class ControlConfig {
 
   setSwapped(swapped) {
     this.layout.swapped = swapped;
+    this.layout.buttons = defaultButtons(swapped); // re-seat to that hand's defaults
     this.save();
   }
 
-  setPosition(which, xPct, yPct) {
-    this.layout[which] = { xPct, yPct };
+  // Free placement of a single button (D-pad arrow or action).
+  setButtonPos(act, xPct, yPct) {
+    this.layout.buttons[act] = { xPct, yPct };
     this.save();
   }
 }

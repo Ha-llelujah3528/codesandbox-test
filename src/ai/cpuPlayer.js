@@ -43,61 +43,100 @@ export class CpuPlayer {
     return [swap()];
   }
 
-  // Pick the best horizontal swap of two settled blocks: maximise immediate
-  // clears, else nudge same colours closer together.
+  // Pick the best swap. Each candidate is simulated INCLUDING the resulting
+  // fall (gravity collapse), so the CPU can deliberately drop a block into a
+  // gap to complete a line. Scoring prefers clears, then building same-colour
+  // adjacency, then flattening the tallest column — so it never just idles
+  // when a column is clumped (it keeps spreading panels out).
   _think() {
-    const g = this._colorGrid();
+    const base = this._colorGrid(); // -1 empty, -2 wall, >=0 colour
     const swappable = (x, y) => {
       const a = this.e.board.cells[idx(x, y)];
       const b = this.e.board.cells[idx(x + 1, y)];
-      return a.state === State.IDLE && b.state === State.IDLE && a.color !== b.color;
+      const okA = a.state === State.IDLE || a.state === State.EMPTY;
+      const okB = b.state === State.IDLE || b.state === State.EMPTY;
+      if (!okA || !okB) return false;
+      if (a.state === State.EMPTY && b.state === State.EMPTY) return false;
+      return a.color !== b.color;
     };
 
     let best = null;
-    let bestClear = 0;
+    let bestScore = -Infinity;
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W - 1; x++) {
         if (!swappable(x, y)) continue;
+        const g = base.slice();
         const i = idx(x, y), j = idx(x + 1, y);
         [g[i], g[j]] = [g[j], g[i]];
-        const c = this._countMatches(g);
-        [g[i], g[j]] = [g[j], g[i]];
-        if (c > bestClear) {
-          bestClear = c;
+        this._collapse(g);
+        const clears = this._countMatches(g);
+        const adj = this._adjScore(g);
+        const maxH = this._maxHeight(g);
+        let score = clears * 1000 + adj * 5 - maxH * 2;
+        if (this._last && this._last.x === x && this._last.y === y) score -= 8; // anti-thrash
+        if (score > bestScore) {
+          bestScore = score;
           best = { x, y };
         }
       }
     }
-    if (best) return best;
-
-    // no clear available — make the most "constructive" tidy swap
-    let bestAdj = -1;
-    let tidy = null;
-    for (let y = 0; y < GRID_H; y++) {
-      for (let x = 0; x < GRID_W - 1; x++) {
-        if (!swappable(x, y)) continue;
-        const i = idx(x, y), j = idx(x + 1, y);
-        const base = this._adjScore(g);
-        [g[i], g[j]] = [g[j], g[i]];
-        const s = this._adjScore(g) - base;
-        [g[i], g[j]] = [g[j], g[i]];
-        if (s > bestAdj) {
-          bestAdj = s;
-          tidy = { x, y };
-        }
-      }
-    }
-    return bestAdj > 0 ? tidy : null;
+    this._last = best;
+    return best;
   }
 
+  // -1 empty, -2 immovable (garbage / clearing / swapping), >=0 idle colour
   _colorGrid() {
     const cells = this.e.board.cells;
     const g = new Array(GRID_W * GRID_H);
     for (let i = 0; i < g.length; i++) {
       const b = cells[i];
-      g[i] = b.state === State.IDLE && b.color !== 0 ? b.color : -1;
+      if (b.state === State.IDLE && b.color !== 0) g[i] = b.color;
+      else if (b.state === State.EMPTY || b.color === 0) g[i] = -1;
+      else g[i] = -2; // wall
+    }
+    // mark garbage cells as walls
+    for (const gar of this.e.board.garbages) {
+      for (let yy = gar.y; yy < gar.y + gar.h; yy++) {
+        for (let xx = gar.x; xx < gar.x + gar.w; xx++) {
+          if (yy >= 0 && yy < GRID_H) g[idx(xx, yy)] = -2;
+        }
+      }
     }
     return g;
+  }
+
+  // Collapse each column so movable colours fall over walls/floor. Walls
+  // (-2, e.g. garbage) partition the column into segments; colours compact to
+  // the bottom of their own segment, preserving vertical order.
+  _collapse(g) {
+    for (let x = 0; x < GRID_W; x++) {
+      let segBottom = GRID_H - 1;
+      for (let y = GRID_H - 1; y >= -1; y--) {
+        const isWall = y < 0 || g[idx(x, y)] === -2;
+        if (!isWall) continue;
+        const colors = [];
+        for (let k = y + 1; k <= segBottom; k++) {
+          if (g[idx(x, k)] >= 0) colors.push(g[idx(x, k)]);
+        }
+        let yy = segBottom;
+        for (let c = colors.length - 1; c >= 0; c--) g[idx(x, yy--)] = colors[c];
+        for (; yy >= y + 1; yy--) g[idx(x, yy)] = -1;
+        segBottom = y - 1;
+      }
+    }
+  }
+
+  _maxHeight(g) {
+    let max = 0;
+    for (let x = 0; x < GRID_W; x++) {
+      for (let y = 0; y < GRID_H; y++) {
+        if (g[idx(x, y)] !== -1) {
+          max = Math.max(max, GRID_H - y);
+          break;
+        }
+      }
+    }
+    return max;
   }
 
   _countMatches(g) {
@@ -105,7 +144,7 @@ export class CpuPlayer {
     for (let y = 0; y < GRID_H; y++) {
       let run = 1;
       for (let x = 1; x <= GRID_W; x++) {
-        const same = x < GRID_W && g[idx(x, y)] !== -1 && g[idx(x, y)] === g[idx(x - 1, y)];
+        const same = x < GRID_W && g[idx(x, y)] >= 0 && g[idx(x, y)] === g[idx(x - 1, y)];
         if (same) run++;
         else {
           if (run >= 3) for (let k = x - run; k < x; k++) set.add(idx(k, y));
@@ -116,7 +155,7 @@ export class CpuPlayer {
     for (let x = 0; x < GRID_W; x++) {
       let run = 1;
       for (let y = 1; y <= GRID_H; y++) {
-        const same = y < GRID_H && g[idx(x, y)] !== -1 && g[idx(x, y)] === g[idx(x, y - 1)];
+        const same = y < GRID_H && g[idx(x, y)] >= 0 && g[idx(x, y)] === g[idx(x, y - 1)];
         if (same) run++;
         else {
           if (run >= 3) for (let k = y - run; k < y; k++) set.add(idx(x, k));
@@ -133,7 +172,7 @@ export class CpuPlayer {
     for (let y = 0; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) {
         const c = g[idx(x, y)];
-        if (c === -1) continue;
+        if (c < 0) continue; // skip empty (-1) and walls (-2)
         if (x + 1 < GRID_W && g[idx(x + 1, y)] === c) s++;
         if (y + 1 < GRID_H && g[idx(x, y + 1)] === c) s++;
       }
