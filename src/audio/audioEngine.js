@@ -19,25 +19,53 @@ export class AudioEngine {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     this.ctx = new AC();
-    this.master = this.ctx.createGain();
+    const ctx = this.ctx;
+
+    // master glue compressor -> destination
+    this.master = ctx.createGain();
     this.master.gain.value = 0.85;
-    this.master.connect(this.ctx.destination);
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -16;
+    comp.ratio.value = 3;
+    comp.attack.value = 0.005;
+    comp.release.value = 0.25;
+    this.master.connect(comp);
+    comp.connect(ctx.destination);
 
-    this.musicGain = this.ctx.createGain();
-    this.musicGain.gain.value = 0.34;
-    this.musicGain.connect(this.master);
-
-    this.sfxGain = this.ctx.createGain();
-    this.sfxGain.gain.value = 0.5;
-    this.sfxGain.connect(this.master);
-
-    // gentle master lowpass for a warm, mellow tone
-    this.warm = this.ctx.createBiquadFilter();
+    // warm master lowpass for the mellow jazz tone
+    this.warm = ctx.createBiquadFilter();
     this.warm.type = "lowpass";
     this.warm.frequency.value = 5200;
-    this.musicGain.disconnect();
-    this.musicGain.connect(this.warm);
     this.warm.connect(this.master);
+
+    // music dry bus
+    this.musicGain = ctx.createGain();
+    this.musicGain.gain.value = 0.3;
+    this.musicGain.connect(this.warm);
+
+    // reverb send (generated impulse) for space/richness
+    this.reverb = ctx.createConvolver();
+    this.reverb.buffer = this._makeImpulse(2.4, 2.6);
+    this.reverbReturn = ctx.createGain();
+    this.reverbReturn.gain.value = 0.28;
+    this.reverb.connect(this.reverbReturn);
+    this.reverbReturn.connect(this.master);
+
+    // tempo-synced feedback delay send (jazzy echoes)
+    this.delay = ctx.createDelay(1.0);
+    this.delay.delayTime.value = 60 / this.bpm / 2; // dotted-ish 8th feel
+    this.delayFb = ctx.createGain();
+    this.delayFb.gain.value = 0.32;
+    this.delayReturn = ctx.createGain();
+    this.delayReturn.gain.value = 0.2;
+    this.delay.connect(this.delayFb);
+    this.delayFb.connect(this.delay);
+    this.delay.connect(this.delayReturn);
+    this.delayReturn.connect(this.warm);
+
+    this.sfxGain = ctx.createGain();
+    this.sfxGain.gain.value = 0.5;
+    this.sfxGain.connect(this.master);
 
     this.started = true;
     this.nextNoteTime = this.ctx.currentTime + 0.05;
@@ -47,6 +75,26 @@ export class AudioEngine {
   toggleMute() {
     this.muted = !this.muted;
     if (this.master) this.master.gain.value = this.muted ? 0 : 0.85;
+  }
+
+  setPaused(p) {
+    if (!this.ctx) return;
+    if (p) this.ctx.suspend();
+    else this.ctx.resume();
+  }
+
+  // Generated exponential-decay noise impulse for the reverb convolver.
+  _makeImpulse(seconds, decay) {
+    const rate = this.ctx.sampleRate;
+    const len = Math.floor(rate * seconds);
+    const buf = this.ctx.createBuffer(2, len, rate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+      }
+    }
+    return buf;
   }
 
   setDanger(on) {
@@ -204,31 +252,103 @@ export class AudioEngine {
     if (this.muted) return;
     const bar = Math.floor(step / 16);
     const s = step % 16;
-    // chord roots (MIDI): Dm7, G7, Cmaj7, Am7
+    const sec16 = 60 / this.bpm / 4;
+    // ii–V–I–vi in C with 9th/13th color tones
     const roots = [50, 43, 48, 45];
     const chords = [
-      [50, 53, 57, 60], // Dm7
-      [43, 47, 50, 53], // G7
-      [48, 52, 55, 59], // Cmaj7
-      [45, 48, 52, 55], // Am7
+      [50, 53, 57, 60, 64], // Dm9
+      [43, 47, 53, 57, 62], // G13
+      [48, 52, 55, 59, 62], // Cmaj9
+      [45, 48, 52, 55, 59], // Am9
     ];
     const root = roots[bar];
     const chord = chords[bar];
 
-    // bass: root on 1, fifth/approach on 3 and the "and" of 4
-    if (s === 0) this._bass(this._m2f(root - 12), time, 0.42);
-    else if (s === 6) this._bass(this._m2f(root - 12 + 7), time, 0.3);
-    else if (s === 11) this._bass(this._m2f(root - 12 + 5), time, 0.26);
+    // lush sustained pad at the top of each bar (through reverb)
+    if (s === 0) this._pad(chord, time, sec16 * 16);
 
-    // Rhodes chord stabs on off-beats (jazzy comping)
-    if (s === 2 || s === 7 || s === 10) {
-      for (const m of chord) this._rhodes(this._m2f(m), time, 0.12);
+    // walking-ish bass
+    if (s === 0) this._bass(this._m2f(root - 12), time, 0.42);
+    else if (s === 4) this._bass(this._m2f(root - 12 + 3), time, 0.24);
+    else if (s === 8) this._bass(this._m2f(root - 12 + 7), time, 0.3);
+    else if (s === 11) this._bass(this._m2f(root - 12 + 10), time, 0.22);
+    else if (s === 14) this._bass(this._m2f(root - 12 + 5), time, 0.2);
+
+    // Rhodes comping stabs on the off-beats
+    if (s === 2 || s === 7 || s === 10 || s === 13) {
+      for (const m of chord) this._rhodes(this._m2f(m), time, 0.09);
     }
 
-    // closed hats every 8th, swung
+    // sparse arpeggio lead in the upper octave (every other bar), through delay
+    if (s % 2 === 1 && bar % 2 === 1) {
+      const note = chord[(s >> 1) % chord.length] + 12;
+      this._arp(this._m2f(note), time, 0.07);
+    }
+
+    // swung closed hats + backbeat snare + kick
     if (s % 2 === 0) this._hat(time, s % 4 === 0 ? 0.1 : 0.06);
-    // soft kick on 1 and the "and" of 2
-    if (s === 0 || s === 6) this._kick(time);
+    if (s === 4 || s === 12) this._snare(time);
+    if (s === 0 || s === 6 || s === 10) this._kick(time);
+  }
+
+  _pad(chordMidi, t, dur) {
+    for (const m of chordMidi) {
+      for (const det of [-0.08, 0.08]) {
+        const o = this.ctx.createOscillator();
+        o.type = "sawtooth";
+        o.frequency.value = this._m2f(m - 12) * (1 + det / 12);
+        const f = this.ctx.createBiquadFilter();
+        f.type = "lowpass";
+        f.frequency.value = 1400;
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.018, t + 0.4);
+        g.gain.setValueAtTime(0.018, t + dur - 0.4);
+        g.gain.linearRampToValueAtTime(0.0008, t + dur);
+        o.connect(f);
+        f.connect(g);
+        g.connect(this.musicGain);
+        g.connect(this.reverb);
+        o.start(t);
+        o.stop(t + dur + 0.05);
+      }
+    }
+  }
+
+  _arp(freq, t, peak) {
+    const o = this.ctx.createOscillator();
+    o.type = "triangle";
+    o.frequency.value = freq;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(peak, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+    o.connect(g);
+    g.connect(this.musicGain);
+    g.connect(this.delay);
+    o.start(t);
+    o.stop(t + 0.3);
+  }
+
+  _snare(t) {
+    const len = Math.floor(this.ctx.sampleRate * 0.18);
+    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    const f = this.ctx.createBiquadFilter();
+    f.type = "highpass";
+    f.frequency.value = 1800;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.12, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    src.connect(f);
+    f.connect(g);
+    g.connect(this.musicGain);
+    g.connect(this.reverb);
+    src.start(t);
+    src.stop(t + 0.18);
   }
 
   _m2f(m) {
@@ -267,6 +387,7 @@ export class AudioEngine {
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
     carrier.connect(g);
     g.connect(this.musicGain);
+    g.connect(this.reverb);
     carrier.start(t);
     mod.start(t);
     carrier.stop(t + 0.52);

@@ -11,7 +11,7 @@ export const GRID_H = 12;
 export const NUM_COLORS = 5;
 
 // --- Swap ---
-export const SWAP_TIME = 4; // frames a swap animation takes
+export const SWAP_TIME = 11; // frames a swap animation takes (visible "flip")
 
 // --- Clear timeline (matched -> flash -> face -> staggered pop -> empty) ---
 export const FLASH_TIME = 44; // flashing duration before faces
@@ -22,8 +22,8 @@ export const CLEAR_STOP_GRACE = 12;
 
 // --- Gravity / falling (sub-cell fixed point, 16 = one full cell) ---
 export const FALL_UNIT = 16;
-export const FALL_INC = 4; // sub-units per frame -> 4 frames per cell
-export const LAND_TIME = 2; // landing lag before a fallen block becomes idle
+export const FALL_INC = 2; // sub-units per frame -> 8 frames per cell (slower fall)
+export const LAND_TIME = 3; // landing lag before a fallen block becomes idle
 
 // --- Rising (sub-cell fixed point, RISE_UNIT = one full cell) ---
 export const RISE_UNIT = 3000;
