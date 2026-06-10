@@ -101,9 +101,9 @@ export function advanceGarbageGravity(engine) {
 }
 
 // Trigger settled garbage adjacent to a just-cleared cell, flooding across
-// connected garbage so a stacked mass reacts together. `power` = number of
-// panels in the clear; it decides how many rows of each piece convert.
-export function triggerGarbage(engine, clearedIdx, power) {
+// connected garbage so a stacked mass reacts together. `strength` grows the
+// number of rows that unzip (see advanceGarbageTransform).
+export function triggerGarbage(engine, clearedIdx, strength) {
   const board = engine.board;
   const triggered = new Set();
   const queue = [];
@@ -125,7 +125,7 @@ export function triggerGarbage(engine, clearedIdx, power) {
   for (const g of triggered) {
     g.state = GState.FLASHING;
     g.timer = GARBAGE_FLASH;
-    g.power = power;
+    g.strength = strength;
   }
 }
 
@@ -159,28 +159,28 @@ export function advanceGarbageTransform(engine) {
     if (g.state === GState.FLASHING) {
       g.timer--;
       if (g.timer <= 0) {
-        const rows = Math.min(Math.max(0, (g.power || 3) - 1), g.h); // clearSize-1 rows
+        // unzip 2 rows for a plain 3-match, +1 row per 2 strength (half-rate),
+        // capped at the slab height. Leftover rows stay as a smaller slab.
+        const rows = Math.min(2 + Math.ceil((g.strength || 0) / 2), g.h);
         g.convertCells = rows * g.w;
         g.revealed = 0;
         g.colors = [];
-        if (g.convertCells <= 0) {
-          g.state = GState.IDLE; // nothing to convert, stays garbage
-        } else {
-          g.state = GState.CONVERTING;
-          g.timer = GARBAGE_CONVERT_STEP;
-        }
+        g.state = GState.CONVERTING;
+        g.timer = GARBAGE_CONVERT_STEP;
       }
     } else if (g.state === GState.CONVERTING) {
       g.timer--;
       if (g.timer > 0) continue;
       g.timer = GARBAGE_CONVERT_STEP;
-      // reveal the next panel (bottom row first, left-to-right, going up)
-      const order = g.revealed;
-      const cx = g.x + (order % g.w);
-      const cy = g.y + g.h - 1 - Math.floor(order / g.w);
-      g.colors[order] = 1 + engine.rng.int(NUM_COLORS);
-      engine.emit(Ev.GARBAGE_CONVERT, { x: cx, y: cy });
-      g.revealed++;
+      // unzip one whole ROW per step, from the bottom up
+      for (let i = 0; i < g.w && g.revealed < g.convertCells; i++) {
+        const order = g.revealed;
+        const cx = g.x + (order % g.w);
+        const cy = g.y + g.h - 1 - Math.floor(order / g.w);
+        g.colors[order] = 1 + engine.rng.int(NUM_COLORS);
+        engine.emit(Ev.GARBAGE_CONVERT, { x: cx, y: cy });
+        g.revealed++;
+      }
       if (g.revealed >= g.convertCells) {
         g.state = GState.HOLD;
         g.timer = GARBAGE_HOLD;

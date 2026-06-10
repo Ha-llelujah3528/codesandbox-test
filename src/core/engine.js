@@ -299,9 +299,12 @@ export class Engine {
         b.popCount = total;
       });
 
-      // an adjacent match detonates resting garbage; clear size decides how
-      // many rows of each piece unzip (rows = total - 1)
-      triggerGarbage(this, matches, total);
+      // an adjacent match detonates resting garbage. "strength" = how much the
+      // clear over-performs a basic 3-match; it grows the unzip depth at half
+      // rate (combo size beyond 3, plus chain depth beyond 1).
+      const strength =
+        Math.max(0, total - 3) + (this.chainCounter >= 2 ? this.chainCounter - 1 : 0);
+      triggerGarbage(this, matches, strength);
 
       // scoring
       this.score += total * C.BLOCK_CLEAR_SCORE;
@@ -325,7 +328,8 @@ export class Engine {
           x: matches[0] % C.GRID_W,
           y: Math.floor(matches[0] / C.GRID_W),
         });
-        outCells += C.GRID_W * Math.min(this.chainCounter - 1, 6); // full-width rows
+        // chain garbage at half the old rate: 2-chain == a 4-combo (3 cells)
+        outCells += 3 * Math.min(this.chainCounter - 1, 8);
       }
       // 相殺: cancel pending incoming garbage first, send only the surplus
       if (outCells > 0) this.sendOrCancel(outCells);
