@@ -17,8 +17,10 @@ import {
   spawnGarbage,
   advanceGarbageGravity,
   advanceGarbageTransform,
+  advanceIncoming,
   triggerGarbage,
   garbageBusy,
+  cellsToPieces,
 } from "./garbage.js";
 
 // The deterministic game core. Advances only via tick(commands). No browser,
@@ -42,10 +44,8 @@ export class Engine {
     this.events = [];
 
     // versus garbage
-    this.incoming = []; // queued garbage specs waiting to drop
+    this.incoming = []; // telegraphed garbage waiting to drop (counterable)
     this.nextGid = 1;
-    this.pendingOut = []; // garbage to send, released ~2s after the chain ends
-    this.sendTimer = 0;
 
     const startRows = opts.startRows || 6;
     fillStartStack(this.board, this.rng, startRows);
@@ -68,11 +68,11 @@ export class Engine {
     const settled = this.advanceGravity();
     advanceGarbageGravity(this);
     this.detectMatches(settled);
+    advanceIncoming(this); // telegraph countdown on queued garbage
     spawnGarbage(this);
     this.advanceRising();
     if (this.checkTopOut()) return; // instant game over the moment we touch the line
     this.resolveChainAndDanger();
-    this.advanceSend();
     this.advanceLevel();
   }
 
@@ -305,6 +305,8 @@ export class Engine {
 
       // scoring
       this.score += total * C.BLOCK_CLEAR_SCORE;
+      // garbage produced by this clear, measured in cells (area)
+      let outCells = 0;
       if (total >= 4) {
         this.combo = total;
         this.score += C.COMBO_BONUS[Math.min(total, C.COMBO_BONUS.length - 1)];
@@ -313,8 +315,7 @@ export class Engine {
           x: matches[0] % C.GRID_W,
           y: Math.floor(matches[0] / C.GRID_W),
         });
-        // a big simultaneous clear sends a wide, 1-row garbage slab
-        this.pendingOut.push({ w: Math.min(total - 1, C.GRID_W), h: 1 });
+        outCells += total - 1; // a wide 1-row slab
       }
       if (this.chainCounter >= 2) {
         this.score +=
@@ -324,9 +325,10 @@ export class Engine {
           x: matches[0] % C.GRID_W,
           y: Math.floor(matches[0] / C.GRID_W),
         });
-        // deeper chains send taller full-width garbage
-        this.pendingOut.push({ w: C.GRID_W, h: Math.min(this.chainCounter - 1, 6) });
+        outCells += C.GRID_W * Math.min(this.chainCounter - 1, 6); // full-width rows
       }
+      // 相殺: cancel pending incoming garbage first, send only the surplus
+      if (outCells > 0) this.sendOrCancel(outCells);
       this.emit(Ev.MATCH, {
         count: total,
         chain: this.chainCounter,
@@ -398,8 +400,6 @@ export class Engine {
       this.chainActive = false;
       this.chainCounter = 0;
       this.combo = 0;
-      // hold the garbage we built up, then drop it on the opponent ~2s later
-      if (this.pendingOut.length > 0) this.sendTimer = C.GARBAGE_SEND_DELAY;
     }
     const top = stackTopRow(this.board);
     const danger = top <= C.DANGER_TOP_ROW && top < C.GRID_H;
@@ -409,14 +409,25 @@ export class Engine {
     }
   }
 
-  // release queued garbage to the opponent once the post-chain delay elapses
-  advanceSend() {
-    if (this.sendTimer > 0) {
-      this.sendTimer--;
-      if (this.sendTimer === 0 && this.pendingOut.length > 0) {
-        for (const spec of this.pendingOut) this.emit(Ev.SEND_GARBAGE, spec);
-        this.pendingOut.length = 0;
+  // 相殺 (offset): the garbage a clear produces first cancels our own pending
+  // incoming garbage (cell-for-cell, soonest-to-drop first); only the surplus
+  // is sent to the opponent.
+  sendOrCancel(cells) {
+    let remaining = cells;
+    while (remaining > 0 && this.incoming.length > 0) {
+      const p = this.incoming[0];
+      const pc = p.w * p.h;
+      if (pc <= remaining) {
+        remaining -= pc;
+        this.incoming.shift();
+      } else {
+        const pieces = cellsToPieces(pc - remaining).map((q) => ({ ...q, delay: p.delay }));
+        this.incoming.splice(0, 1, ...pieces);
+        remaining = 0;
       }
+    }
+    if (remaining > 0) {
+      for (const piece of cellsToPieces(remaining)) this.emit(Ev.SEND_GARBAGE, piece);
     }
   }
 

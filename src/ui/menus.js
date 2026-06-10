@@ -50,6 +50,11 @@ export function initMenus(cb) {
   hud.className = "hidden";
   document.body.appendChild(hud);
 
+  const countdown = document.createElement("div");
+  countdown.id = "countdown";
+  countdown.className = "hidden";
+  document.body.appendChild(countdown);
+
   const $ = (id) => root.querySelector(id);
   const titleScreen = $("#title-screen");
   const modeSelect = $("#mode-select");
@@ -117,6 +122,23 @@ export function initMenus(cb) {
     hud.classList.remove("hidden");
   }
 
+  let lastCd = null;
+  function setCountdown(label) {
+    if (label === lastCd) return; // avoid restarting the CSS pop every frame
+    lastCd = label;
+    if (!label) {
+      countdown.classList.add("hidden");
+      return;
+    }
+    countdown.textContent = label;
+    countdown.classList.remove("hidden");
+    countdown.classList.toggle("go", label === "START!");
+    // retrigger the pop animation
+    countdown.style.animation = "none";
+    void countdown.offsetWidth;
+    countdown.style.animation = "";
+  }
+
   // wire buttons
   $("#title-start").addEventListener("click", () => {
     cb.onBoot && cb.onBoot();
@@ -130,5 +152,5 @@ export function initMenus(cb) {
   $("#result-modes").addEventListener("click", () => showModeSelect());
   $("#result-title").addEventListener("click", () => showTitle());
 
-  return { showTitle, showModeSelect, showResult, hideAll, setHud };
+  return { showTitle, showModeSelect, showResult, hideAll, setHud, setCountdown };
 }

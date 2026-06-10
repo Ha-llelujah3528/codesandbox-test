@@ -74,6 +74,7 @@ function finishToResult() {
   resultShown = true;
   scene = "result";
   menus.setHud("");
+  menus.setCountdown(null);
   menus.showResult(mode, session.result);
 }
 
@@ -128,8 +129,10 @@ function frame(now) {
   while (acc >= STEP) {
     if (scene === "play" && session) {
       session.stepFrame(paused);
+      menus.setCountdown(session.countdownLabel());
       if (mode === "sprint" && !paused) menus.setHud(session.hudHtml());
-      if (session.finished && !resultShown) finishToResult();
+      // hold on the stone/defeat for a beat before showing the result screen
+      if (session.readyForResult() && !resultShown) finishToResult();
     } else if (scene === "result" && session) {
       input.drainFrameCommands(); // freeze, just flush input
     } else {

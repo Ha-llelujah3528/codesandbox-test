@@ -9,6 +9,15 @@ import { queueGarbage } from "./core/garbage.js";
 import { Ev } from "./core/types.js";
 
 const seed32 = () => (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+const COUNTDOWN = 180; // 3s "READY" countdown before play begins
+const OVER_HOLD = 90; // 1.5s to show the stone/defeat before the result screen
+
+// Countdown / start-flash label shared by sessions ("3","2","1","START!").
+function cdLabel(s) {
+  if (s.countdown > 0) return String(Math.ceil(s.countdown / 60));
+  if (s.goFlash > 0) return "START!";
+  return null;
+}
 
 // Endless or Time-Attack (sprint to a target score).
 export class SingleSession {
@@ -26,6 +35,9 @@ export class SingleSession {
     this.frames = 0;
     this.finished = false;
     this.result = null;
+    this.countdown = COUNTDOWN;
+    this.goFlash = 0;
+    this.overHold = 0;
   }
 
   setPaused(p) {
@@ -33,9 +45,26 @@ export class SingleSession {
     this.audio.setPaused(p);
   }
 
+  countdownLabel() {
+    return cdLabel(this);
+  }
+  readyForResult() {
+    return this.finished && this.overHold <= 0;
+  }
+
   stepFrame(paused) {
     const cmds = this.input.drainFrameCommands();
-    if (paused || this.finished) return;
+    if (paused) return;
+    if (this.countdown > 0) {
+      this.countdown--;
+      if (this.countdown === 0) this.goFlash = 30;
+      return;
+    }
+    if (this.goFlash > 0) this.goFlash--;
+    if (this.finished) {
+      if (this.overHold > 0) this.overHold--;
+      return;
+    }
     this.engine.tick(cmds);
     this.renderer.consumeEvents(this.engine.events);
     this.audio.consumeEvents(this.engine.events);
@@ -43,9 +72,11 @@ export class SingleSession {
 
     if (this.mode === "sprint" && !this.engine.gameOver && this.engine.score >= this.target) {
       this.finished = true;
+      this.overHold = 30;
       this.result = { outcome: "clear", score: this.engine.score, frames: this.frames };
     } else if (this.engine.gameOver) {
       this.finished = true;
+      this.overHold = OVER_HOLD;
       this.result = { outcome: "over", score: this.engine.score, frames: this.frames };
     }
   }
@@ -81,8 +112,18 @@ export class VsSession {
     this.frames = 0;
     this.finished = false;
     this.result = null;
+    this.countdown = COUNTDOWN;
+    this.goFlash = 0;
+    this.overHold = 0;
     this._onResize = () => this._layout();
     window.addEventListener("resize", this._onResize);
+  }
+
+  countdownLabel() {
+    return cdLabel(this);
+  }
+  readyForResult() {
+    return this.finished && this.overHold <= 0;
   }
 
   _areas() {
@@ -103,7 +144,17 @@ export class VsSession {
 
   stepFrame(paused) {
     const c1 = this.input.drainFrameCommands();
-    if (paused || this.finished) return;
+    if (paused) return;
+    if (this.countdown > 0) {
+      this.countdown--;
+      if (this.countdown === 0) this.goFlash = 30;
+      return;
+    }
+    if (this.goFlash > 0) this.goFlash--;
+    if (this.finished) {
+      if (this.overHold > 0) this.overHold--;
+      return;
+    }
     const c2 = this.cpu.frame();
     this.p1.tick(c1);
     this.p2.tick(c2);
@@ -117,6 +168,7 @@ export class VsSession {
 
     if (this.p1.gameOver || this.p2.gameOver) {
       this.finished = true;
+      this.overHold = OVER_HOLD;
       const win = this.p2.gameOver && !this.p1.gameOver;
       this.result = { outcome: win ? "win" : "lose", score: this.p1.score, frames: this.frames };
     }

@@ -185,6 +185,7 @@ export class Renderer {
 
     if (this.label) this.drawLabel(ctx);
     this.drawHud(ctx);
+    this.drawIncoming(ctx);
     this.drawBanner(ctx);
     if (this.engine.danger && !this.engine.gameOver) this.drawDanger(ctx);
     // game-over is shown via the DOM result screen; the canvas only owns the
@@ -503,6 +504,54 @@ export class Renderer {
     ctx.restore();
   }
 
+  // Top-of-area indicator of garbage queued to drop on this board: which size
+  // and how many, with the about-to-drop ones pulsing red. (相殺 shrinks these.)
+  drawIncoming(ctx) {
+    const inc = this.engine.incoming;
+    if (!inc || inc.length === 0) return;
+    const groups = new Map();
+    for (const p of inc) {
+      const k = p.w + "x" + p.h;
+      const g = groups.get(k) || { w: p.w, h: p.h, n: 0, minDelay: Infinity };
+      g.n++;
+      g.minDelay = Math.min(g.minDelay, p.delay || 0);
+      groups.set(k, g);
+    }
+    const items = [...groups.values()];
+    ctx.save();
+    ctx.font = "bold 11px ui-monospace, Menlo, monospace";
+    ctx.textBaseline = "middle";
+    const chipH = Math.min(18, this.cell * 0.5);
+    const iconW = chipH;
+    const gap = 5;
+    const widths = items.map(
+      (it) => iconW + 3 + ctx.measureText(`${it.w}×${it.h} ×${it.n}`).width + 8
+    );
+    const totalW = widths.reduce((a, b) => a + b + gap, 0) - gap;
+    let cx = this.originX + this.boardW / 2 - totalW / 2;
+    const cy = this.originY - chipH - 5;
+    items.forEach((it, i) => {
+      const w = widths[i];
+      const hot = it.minDelay <= 36 && (this.engine.frame >> 2) % 2 === 0;
+      ctx.fillStyle = hot ? "rgba(255,80,110,0.9)" : "rgba(16,26,48,0.85)";
+      this.roundRect(ctx, cx, cy, w, chipH, 5);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(150,190,255,0.4)";
+      ctx.lineWidth = 1;
+      this.roundRect(ctx, cx, cy, w, chipH, 5);
+      ctx.stroke();
+      // mini garbage icon
+      ctx.fillStyle = "#535d70";
+      this.roundRect(ctx, cx + 3, cy + 3, iconW - 6, chipH - 6, 2);
+      ctx.fill();
+      ctx.fillStyle = "#e3ecff";
+      ctx.textAlign = "left";
+      ctx.fillText(`${it.w}×${it.h} ×${it.n}`, cx + iconW, cy + chipH / 2 + 0.5);
+      cx += w + gap;
+    });
+    ctx.restore();
+  }
+
   // Small board title used in versus mode ("YOU" / "CPU").
   drawLabel(ctx) {
     ctx.save();
@@ -533,6 +582,9 @@ export class Renderer {
       alpha = 0.85;
       flash = true;
     }
+    // on game over the surviving panels petrify into grey stone (with a
+    // defeated face) — see the body gradient + face branch below.
+    const stone = this.engine.gameOver && !flash;
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -555,13 +607,18 @@ export class Renderer {
     }
 
     // --- armor plate body (chamfered) with metallic vertical gradient ---
-    ctx.shadowColor = ramp.glow;
-    ctx.shadowBlur = dim ? 3 : flash ? 26 : 13;
+    ctx.shadowColor = stone ? "rgba(15,18,24,0.6)" : ramp.glow;
+    ctx.shadowBlur = dim ? 3 : flash ? 26 : stone ? 5 : 13;
     const grad = ctx.createLinearGradient(x, y, x, y + s);
     if (flash) {
       grad.addColorStop(0, "#ffffff");
       grad.addColorStop(0.5, ramp.edge);
       grad.addColorStop(1, "#ffffff");
+    } else if (stone) {
+      grad.addColorStop(0, "#737880");
+      grad.addColorStop(0.18, "#565b64");
+      grad.addColorStop(0.55, "#42464e");
+      grad.addColorStop(1, "#262931");
     } else {
       grad.addColorStop(0, ramp.edge);
       grad.addColorStop(0.18, ramp.core);
@@ -636,7 +693,9 @@ export class Renderer {
     // --- unit insignia / colorblind glyph, surprised face on clear, or the
     //     worried "panic" face while the stack is in the danger zone ---
     ctx.globalAlpha = alpha * 0.92;
-    if (b.state === State.FACE) {
+    if (stone) {
+      this.drawLostFace(ctx, x, y, s);
+    } else if (b.state === State.FACE) {
       this.drawFace(ctx, x, y, s);
     } else if (panic && !flash) {
       this.drawPanicFace(ctx, x, y, s);
@@ -651,6 +710,28 @@ export class Renderer {
       );
     }
 
+    ctx.restore();
+  }
+
+  // Defeated face drawn on the petrified panels at game over: X eyes + a
+  // downturned, despairing mouth.
+  drawLostFace(ctx, x, y, s) {
+    ctx.save();
+    ctx.strokeStyle = "#15171d";
+    ctx.lineWidth = Math.max(1.6, s * 0.06);
+    ctx.lineCap = "round";
+    const ey = y + s * 0.42, r = s * 0.08;
+    // X eyes
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.34 - r, ey - r); ctx.lineTo(x + s * 0.34 + r, ey + r);
+    ctx.moveTo(x + s * 0.34 + r, ey - r); ctx.lineTo(x + s * 0.34 - r, ey + r);
+    ctx.moveTo(x + s * 0.66 - r, ey - r); ctx.lineTo(x + s * 0.66 + r, ey + r);
+    ctx.moveTo(x + s * 0.66 + r, ey - r); ctx.lineTo(x + s * 0.66 - r, ey + r);
+    ctx.stroke();
+    // despairing open frown
+    ctx.beginPath();
+    ctx.arc(x + s * 0.5, y + s * 0.82, s * 0.16, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
     ctx.restore();
   }
 

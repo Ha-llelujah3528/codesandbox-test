@@ -14,6 +14,7 @@ import {
   GARBAGE_FLASH,
   GARBAGE_CONVERT_STEP,
   GARBAGE_HOLD,
+  GARBAGE_TELEGRAPH,
 } from "./constants.js";
 import { GState, Ev } from "./types.js";
 import { idx, cellOccupied } from "./board.js";
@@ -21,15 +22,34 @@ import { makeBlock } from "./block.js";
 
 const GARBAGE_FALL_INC = 3;
 
+// Split a cell count into rectangular pieces (full-width rows + a partial row).
+export function cellsToPieces(n) {
+  const out = [];
+  const rows = Math.floor(n / GRID_W);
+  if (rows > 0) out.push({ w: GRID_W, h: rows });
+  const rem = n % GRID_W;
+  if (rem > 0) out.push({ w: rem, h: 1 });
+  return out;
+}
+
+// Incoming garbage is telegraphed: it sits in the queue (shown in the indicator)
+// for a beat before dropping — the window in which it can be countered (相殺).
 export function queueGarbage(engine, w, h) {
   engine.incoming.push({
     w: Math.max(1, Math.min(GRID_W, w | 0)),
     h: Math.max(1, h | 0),
+    delay: GARBAGE_TELEGRAPH,
   });
+}
+
+// Count down the telegraph timers on queued incoming garbage.
+export function advanceIncoming(engine) {
+  for (const p of engine.incoming) if (p.delay > 0) p.delay--;
 }
 
 export function spawnGarbage(engine) {
   if (engine.incoming.length === 0) return;
+  if (engine.incoming[0].delay > 0) return; // still telegraphing
   if (engine.anyClearing()) return;
   for (const g of engine.board.garbages) if (g.state === GState.FALLING) return;
   const spec = engine.incoming.shift();

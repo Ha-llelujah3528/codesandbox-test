@@ -538,3 +538,32 @@ body.in-menu #pause-btn {
 #mode-hud b {
   color: #fff;
 }
+
+/* match-start countdown (3 / 2 / 1 / START!) */
+#countdown {
+  position: fixed;
+  inset: 0;
+  z-index: 22;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-weight: 900;
+  font-size: clamp(80px, 26vw, 200px);
+  color: #eaf4ff;
+  text-shadow: 0 0 30px rgba(80, 170, 255, 0.9), 0 0 8px #fff;
+  animation: cdpop 0.5s ease-out;
+}
+#countdown.hidden {
+  display: none;
+}
+#countdown.go {
+  color: var(--accent);
+  font-size: clamp(54px, 16vw, 130px);
+  text-shadow: 0 0 30px rgba(255, 60, 110, 0.9), 0 0 8px #fff;
+}
+@keyframes cdpop {
+  from { transform: scale(1.8); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: scale(1); opacity: 1; }
+}
