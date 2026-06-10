@@ -10,6 +10,12 @@ export const GRID_H = 12;
 // Number of distinct block colors in play.
 export const NUM_COLORS = 5;
 
+// --- Garbage / おじゃま (vs) ---
+export const GARBAGE_FLASH = 30; // frames a triggered garbage flashes first
+export const GARBAGE_CONVERT_STEP = 12; // frames per panel unzip (a bit slower than a normal pop, POP_TIME=9)
+export const GARBAGE_HOLD = 30; // 0.5s hold after the last panel unzips, before falling
+export const GARBAGE_SEND_DELAY = 120; // 2s after a chain ends before garbage lands on the opponent
+
 // Topmost occupied row at/above which the stack is in "panic" (worried faces,
 // shaking, tense BGM). row 0 is the deadline: a block reaching it tops out.
 export const DANGER_TOP_ROW = 2;

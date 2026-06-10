@@ -1,21 +1,26 @@
-// garbage.js - Versus-mode "おじゃまブロック" (garbage). Garbage blocks are
-// rigid rectangles that drop from above onto the stack. They cannot be matched,
-// but when a normal match clears next to one it flashes and then "unzips" —
-// converting one panel at a time into normal (chain-flagged) panels. Connected
-// garbage masses are triggered together so big combos/chains clear more.
-//
-// Garbage lives in board.garbages (separate from the normal cell grid).
+// garbage.js - Versus-mode "おじゃまブロック" (garbage). A garbage block is ONE
+// big armored panel (sized by the chain/combo that sent it). When a match
+// clears next to it, the whole slab flashes, then "unzips" panel-by-panel from
+// the BOTTOM — but only as many rows as the clear was strong:
+//   clear of 3 -> 2 rows, 4 -> 3, 5 -> 4, 6 -> 5  (rows = clearSize - 1).
+// Rows beyond that flash but stay garbage. After the last panel unzips the
+// converted panels hold position briefly, then drop (become normal, chainable).
 
-import { GRID_W, GRID_H, NUM_COLORS, FALL_UNIT } from "./constants.js";
+import {
+  GRID_W,
+  GRID_H,
+  NUM_COLORS,
+  FALL_UNIT,
+  GARBAGE_FLASH,
+  GARBAGE_CONVERT_STEP,
+  GARBAGE_HOLD,
+} from "./constants.js";
 import { GState, Ev } from "./types.js";
 import { idx, cellOccupied } from "./board.js";
 import { makeBlock } from "./block.js";
 
-const GARBAGE_FALL_INC = 3; // sub-units / frame
-const GARBAGE_FLASH = 42; // frames a triggered garbage flashes before unzipping
-const GARBAGE_CONVERT_STEP = 4; // frames between each panel reveal
+const GARBAGE_FALL_INC = 3;
 
-// Queue incoming garbage (spawned later, when the board is calm).
 export function queueGarbage(engine, w, h) {
   engine.incoming.push({
     w: Math.max(1, Math.min(GRID_W, w | 0)),
@@ -39,16 +44,17 @@ export function spawnGarbage(engine) {
     state: GState.FALLING,
     timer: 0,
     fallOff: 0,
-    revealed: 0, // panels converted so far (during CONVERTING)
+    revealed: 0, // panels unzipped so far
+    convertCells: 0, // how many panels will unzip this trigger (rows*w)
+    colors: [], // revealed panel colours, in reveal order
   });
 }
 
-// Rigid gravity: each garbage falls as one unit until its bottom row rests.
 export function advanceGarbageGravity(engine) {
   const board = engine.board;
   const sorted = board.garbages.slice().sort((a, b) => b.y - a.y);
   for (const g of sorted) {
-    if (g.state === GState.FLASHING || g.state === GState.CONVERTING) continue;
+    if (g.state === GState.FLASHING || g.state === GState.CONVERTING || g.state === GState.HOLD) continue;
     const below = g.y + g.h;
     let supported = false;
     for (let x = g.x; x < g.x + g.w; x++) {
@@ -74,9 +80,10 @@ export function advanceGarbageGravity(engine) {
   }
 }
 
-// Trigger settled garbage adjacent to a just-cleared cell, then flood the
-// trigger across connected (touching) garbage so stacked masses go together.
-export function triggerGarbage(engine, clearedIdx) {
+// Trigger settled garbage adjacent to a just-cleared cell, flooding across
+// connected garbage so a stacked mass reacts together. `power` = number of
+// panels in the clear; it decides how many rows of each piece convert.
+export function triggerGarbage(engine, clearedIdx, power) {
   const board = engine.board;
   const triggered = new Set();
   const queue = [];
@@ -98,6 +105,7 @@ export function triggerGarbage(engine, clearedIdx) {
   for (const g of triggered) {
     g.state = GState.FLASHING;
     g.timer = GARBAGE_FLASH;
+    g.power = power;
   }
 }
 
@@ -114,7 +122,6 @@ function _adjacentToCells(g, clearedIdx) {
   return false;
 }
 
-// Two garbage rectangles are "connected" if they overlap or share an edge.
 function _rectsAdjacent(a, b) {
   const ax2 = a.x + a.w, ay2 = a.y + a.h;
   const bx2 = b.x + b.w, by2 = b.y + b.h;
@@ -125,9 +132,6 @@ function _rectsAdjacent(a, b) {
   return (xOverlap && yOverlap) || (xOverlap && yAdj) || (yOverlap && xAdj);
 }
 
-// Flash, then reveal panels one at a time (bottom row first, left-to-right,
-// going up). When the last panel is revealed the garbage is gone and the new
-// panels — now ordinary, chain-flagged blocks — are free to fall and chain.
 export function advanceGarbageTransform(engine) {
   const board = engine.board;
   for (let k = board.garbages.length - 1; k >= 0; k--) {
@@ -135,38 +139,60 @@ export function advanceGarbageTransform(engine) {
     if (g.state === GState.FLASHING) {
       g.timer--;
       if (g.timer <= 0) {
-        g.state = GState.CONVERTING;
+        const rows = Math.min(Math.max(0, (g.power || 3) - 1), g.h); // clearSize-1 rows
+        g.convertCells = rows * g.w;
         g.revealed = 0;
-        g.timer = GARBAGE_CONVERT_STEP;
+        g.colors = [];
+        if (g.convertCells <= 0) {
+          g.state = GState.IDLE; // nothing to convert, stays garbage
+        } else {
+          g.state = GState.CONVERTING;
+          g.timer = GARBAGE_CONVERT_STEP;
+        }
       }
     } else if (g.state === GState.CONVERTING) {
       g.timer--;
       if (g.timer > 0) continue;
       g.timer = GARBAGE_CONVERT_STEP;
-      const total = g.w * g.h;
+      // reveal the next panel (bottom row first, left-to-right, going up)
       const order = g.revealed;
-      const rowFromBottom = Math.floor(order / g.w);
-      const col = order % g.w;
-      const cx = g.x + col;
-      const cy = g.y + g.h - 1 - rowFromBottom;
-      if (cy >= 0 && cy < GRID_H) {
-        const b = makeBlock(1 + engine.rng.int(NUM_COLORS));
-        b.chaining = true;
-        board.cells[idx(cx, cy)] = b;
-        engine.emit(Ev.GARBAGE_CONVERT, { x: cx, y: cy });
-      }
+      const cx = g.x + (order % g.w);
+      const cy = g.y + g.h - 1 - Math.floor(order / g.w);
+      g.colors[order] = 1 + engine.rng.int(NUM_COLORS);
+      engine.emit(Ev.GARBAGE_CONVERT, { x: cx, y: cy });
       g.revealed++;
-      if (g.revealed >= total) board.garbages.splice(k, 1);
+      if (g.revealed >= g.convertCells) {
+        g.state = GState.HOLD;
+        g.timer = GARBAGE_HOLD;
+      }
+    } else if (g.state === GState.HOLD) {
+      g.timer--;
+      if (g.timer > 0) continue;
+      // commit: write the unzipped panels into the grid, shrink the slab
+      const rows = g.convertCells / g.w;
+      for (let order = 0; order < g.convertCells; order++) {
+        const cx = g.x + (order % g.w);
+        const cy = g.y + g.h - 1 - Math.floor(order / g.w);
+        const b = makeBlock(g.colors[order] || 1 + engine.rng.int(NUM_COLORS));
+        b.chaining = true; // newly revealed panels can extend a chain
+        board.cells[idx(cx, cy)] = b;
+      }
+      if (rows >= g.h) {
+        board.garbages.splice(k, 1); // whole slab consumed
+      } else {
+        g.h -= rows; // keep the un-converted top rows as a smaller slab
+        g.revealed = 0;
+        g.convertCells = 0;
+        g.colors = [];
+        g.state = GState.IDLE;
+      }
     }
   }
 }
 
-// True if any garbage is dropping in or mid-transform (chain/rise bookkeeping).
 export function garbageBusy(board) {
   for (const g of board.garbages) {
-    if (g.state === GState.FALLING || g.state === GState.FLASHING || g.state === GState.CONVERTING) {
-      return true;
-    }
+    if (g.state !== GState.IDLE) return true; // FALLING/FLASHING/CONVERTING/HOLD
   }
   return false;
 }

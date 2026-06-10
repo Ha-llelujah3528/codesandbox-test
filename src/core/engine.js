@@ -44,6 +44,8 @@ export class Engine {
     // versus garbage
     this.incoming = []; // queued garbage specs waiting to drop
     this.nextGid = 1;
+    this.pendingOut = []; // garbage to send, released ~2s after the chain ends
+    this.sendTimer = 0;
 
     const startRows = opts.startRows || 6;
     fillStartStack(this.board, this.rng, startRows);
@@ -70,6 +72,7 @@ export class Engine {
     this.advanceRising();
     if (this.checkTopOut()) return; // instant game over the moment we touch the line
     this.resolveChainAndDanger();
+    this.advanceSend();
     this.advanceLevel();
   }
 
@@ -296,8 +299,9 @@ export class Engine {
         b.popCount = total;
       });
 
-      // an adjacent match detonates resting garbage
-      triggerGarbage(this, matches);
+      // an adjacent match detonates resting garbage; clear size decides how
+      // many rows of each piece unzip (rows = total - 1)
+      triggerGarbage(this, matches, total);
 
       // scoring
       this.score += total * C.BLOCK_CLEAR_SCORE;
@@ -310,7 +314,7 @@ export class Engine {
           y: Math.floor(matches[0] / C.GRID_W),
         });
         // a big simultaneous clear sends a wide, 1-row garbage slab
-        this.emit(Ev.SEND_GARBAGE, { w: Math.min(total - 1, C.GRID_W), h: 1 });
+        this.pendingOut.push({ w: Math.min(total - 1, C.GRID_W), h: 1 });
       }
       if (this.chainCounter >= 2) {
         this.score +=
@@ -321,7 +325,7 @@ export class Engine {
           y: Math.floor(matches[0] / C.GRID_W),
         });
         // deeper chains send taller full-width garbage
-        this.emit(Ev.SEND_GARBAGE, { w: C.GRID_W, h: Math.min(this.chainCounter - 1, 6) });
+        this.pendingOut.push({ w: C.GRID_W, h: Math.min(this.chainCounter - 1, 6) });
       }
       this.emit(Ev.MATCH, {
         count: total,
@@ -394,12 +398,25 @@ export class Engine {
       this.chainActive = false;
       this.chainCounter = 0;
       this.combo = 0;
+      // hold the garbage we built up, then drop it on the opponent ~2s later
+      if (this.pendingOut.length > 0) this.sendTimer = C.GARBAGE_SEND_DELAY;
     }
     const top = stackTopRow(this.board);
     const danger = top <= C.DANGER_TOP_ROW && top < C.GRID_H;
     if (danger !== this.danger) {
       this.danger = danger;
       this.emit(Ev.DANGER, { on: danger });
+    }
+  }
+
+  // release queued garbage to the opponent once the post-chain delay elapses
+  advanceSend() {
+    if (this.sendTimer > 0) {
+      this.sendTimer--;
+      if (this.sendTimer === 0 && this.pendingOut.length > 0) {
+        for (const spec of this.pendingOut) this.emit(Ev.SEND_GARBAGE, spec);
+        this.pendingOut.length = 0;
+      }
     }
   }
 

@@ -28,7 +28,8 @@ export const GState = {
   FALLING: 0, // dropping in from above
   IDLE: 1, // resting on the stack
   FLASHING: 2, // triggered by an adjacent clear, about to convert
-  CONVERTING: 3, // bottom row turning into normal blocks
+  CONVERTING: 3, // unzipping panels one at a time
+  HOLD: 4, // fully unzipped, holding position briefly before falling
 };
 
 // Event type tags emitted by engine.tick — consumed by render/audio only.

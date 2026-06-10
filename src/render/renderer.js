@@ -385,40 +385,51 @@ export class Renderer {
     }
   }
 
-  // Heavy armored "おじゃま" panels (vs mode). Drawn per-cell so they can
-  // "unzip" one panel at a time during conversion; each wears a grumpy face.
+  // Each garbage is ONE big armored slab (sized by the chain/combo that sent
+  // it). As it unzips, the bottom panels are revealed as normal panels while
+  // the remaining slab shrinks from the bottom.
   drawGarbage(ctx) {
     const cell = this.cell;
     for (const g of this.engine.board.garbages) {
-      const fall = (g.fallOff / C.FALL_UNIT) * cell;
-      const flash = g.state === GState.FLASHING && (this.engine.frame >> 2) % 2 === 0;
-      for (let ry = 0; ry < g.h; ry++) {
-        for (let rx = 0; rx < g.w; rx++) {
-          const cx = g.x + rx;
-          const cy = g.y + ry;
-          // skip cells already unzipped into normal panels
-          const order = (g.h - 1 - ry) * g.w + rx;
-          if ((g.revealed || 0) > order) continue;
-          this.drawGarbageCell(
-            ctx,
-            this.originX + cx * cell,
-            this.originY + cy * cell - this.riseFrac() * cell + fall,
-            flash,
-            { top: ry === 0, bottom: ry === g.h - 1, left: rx === 0, right: rx === g.w - 1 }
-          );
-        }
+      const riseY = -this.riseFrac() * cell + (g.fallOff / C.FALL_UNIT) * cell;
+      const flash =
+        (g.state === GState.FLASHING || g.state === GState.HOLD) &&
+        (this.engine.frame >> 2) % 2 === 0;
+      const fullRows = Math.floor((g.revealed || 0) / g.w);
+      const slabRows = g.h - fullRows; // remaining slab (incl. partial row)
+      if (slabRows > 0) {
+        this.drawGarbageSlab(
+          ctx,
+          this.originX + g.x * cell,
+          this.originY + g.y * cell + riseY,
+          g.w * cell,
+          slabRows * cell,
+          flash
+        );
+      }
+      // already-unzipped panels, drawn on top as their revealed colours
+      for (let order = 0; order < (g.revealed || 0); order++) {
+        const cx = g.x + (order % g.w);
+        const cy = g.y + g.h - 1 - Math.floor(order / g.w);
+        this.drawBlock(
+          ctx,
+          this.originX + cx * cell,
+          this.originY + cy * cell + riseY,
+          { color: g.colors[order], state: State.IDLE, timer: 0 },
+          false,
+          false
+        );
       }
     }
   }
 
-  drawGarbageCell(ctx, px, py, flash, edge) {
-    const cell = this.cell;
-    const pad = 1.5;
-    const x = px + pad, y = py + pad, s = cell - pad * 2;
+  drawGarbageSlab(ctx, px, py, w, h, flash) {
+    const pad = 2.5;
+    const x = px + pad, y = py + pad, bw = w - pad * 2, bh = h - pad * 2;
     ctx.save();
-    ctx.shadowColor = flash ? "#ffffff" : "rgba(0,0,0,0.55)";
-    ctx.shadowBlur = flash ? 22 : 7;
-    const grad = ctx.createLinearGradient(x, y, x, y + s);
+    ctx.shadowColor = flash ? "#ffffff" : "rgba(0,0,0,0.6)";
+    ctx.shadowBlur = flash ? 26 : 10;
+    const grad = ctx.createLinearGradient(x, y, x, y + bh);
     if (flash) {
       grad.addColorStop(0, "#ffffff");
       grad.addColorStop(1, "#d6e6ff");
@@ -428,23 +439,38 @@ export class Renderer {
       grad.addColorStop(1, "#212838");
     }
     ctx.fillStyle = grad;
-    this.roundRect(ctx, x, y, s, s, 4);
+    this.roundRect(ctx, x, y, bw, bh, 8);
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // rivets in the corners + a center seam dot (mecha bolts)
-    ctx.fillStyle = "rgba(8,14,28,0.85)";
-    for (const [fx, fy] of [[0.18, 0.18], [0.82, 0.18], [0.18, 0.82], [0.82, 0.82]]) {
+    // interior detailing clipped to the slab: hazard stripes + rivets
+    ctx.save();
+    this.roundRect(ctx, x, y, bw, bh, 8);
+    ctx.clip();
+    ctx.globalAlpha = flash ? 0.16 : 0.3;
+    ctx.strokeStyle = "#f5c451";
+    ctx.lineWidth = 6;
+    for (let i = -bh; i < bw + bh; i += 24) {
       ctx.beginPath();
-      ctx.arc(x + s * fx, y + s * fy, Math.max(1, s * 0.045), 0, Math.PI * 2);
+      ctx.moveTo(x + i, y);
+      ctx.lineTo(x + i - bh, y + bh);
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = "rgba(8,14,28,0.8)";
+    for (const [fx, fy] of [[0.07, 0.09], [0.93, 0.09], [0.07, 0.91], [0.93, 0.91]]) {
+      ctx.beginPath();
+      ctx.arc(x + bw * fx, y + bh * fy, Math.max(1.4, this.cell * 0.05), 0, Math.PI * 2);
       ctx.fill();
     }
-    // grumpy face
-    this.drawGarbageFace(ctx, x, y, s, flash);
-    // bright rim
-    ctx.strokeStyle = flash ? "#ffffff" : "rgba(150,190,255,0.45)";
-    ctx.lineWidth = 1.2;
-    this.roundRect(ctx, x + 0.6, y + 0.6, s - 1.2, s - 1.2, 3.5);
+
+    // one big grumpy face centered on the slab
+    const fs = Math.min(bw, bh) * 0.6;
+    this.drawGarbageFace(ctx, x + bw / 2 - fs / 2, y + bh / 2 - fs / 2, fs, flash);
+
+    ctx.strokeStyle = flash ? "#ffffff" : "rgba(150,190,255,0.5)";
+    ctx.lineWidth = 1.5;
+    this.roundRect(ctx, x + 0.8, y + 0.8, bw - 1.6, bh - 1.6, 7);
     ctx.stroke();
     ctx.restore();
   }

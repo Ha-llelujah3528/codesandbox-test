@@ -25,16 +25,12 @@ export function get(board, x, y) {
   return board.cells[idx(x, y)];
 }
 
-// Does a garbage rectangle still cover cell (x,y)? Cells already "unzipped"
-// into normal panels during conversion no longer count. Returns garbage|null.
+// Does a garbage rectangle cover cell (x,y)? Garbage owns its cells (acting as
+// a wall) right up until it commits its converted panels into the grid, so all
+// cells of the rect count while it is falling / idle / flashing / converting.
 export function garbageAt(board, x, y) {
   for (const g of board.garbages) {
-    if (x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h) {
-      // reveal order: bottom row first, left-to-right, going up
-      const order = (g.y + g.h - 1 - y) * g.w + (x - g.x);
-      if ((g.revealed || 0) > order) continue; // already converted to a panel
-      return g;
-    }
+    if (x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h) return g;
   }
   return null;
 }
